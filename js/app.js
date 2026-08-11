@@ -165,34 +165,42 @@
     return audioCtx;
   }
 
-  // Gunshot as an HTMLAudioElement. Web Audio output is silenced by the iOS
-  // hardware mute switch, but media-element playback is not — so the gunshot
-  // must go through an <audio> element to be heard reliably on phones.
-  let gunAudioEl = null;
+  // Gunshot as pooled HTMLAudioElements. Web Audio output is silenced by the
+  // iOS hardware mute switch, but media-element playback is not — so the
+  // gunshot must go through <audio> to be heard on phones. We fire several
+  // overlapping copies at once for extra loudness (SPL stacks).
+  const GUN_POOL_SIZE = 4;
+  let gunPool = [];
+  let gunURI = null;
 
   function buildGunshotDataURI() {
     const sr = 44100;
-    const dur = 0.35;
+    const dur = 0.4;
     const n = Math.floor(sr * dur);
     const samples = new Float32Array(n);
     let hpPrevX = 0, hpPrevY = 0;
     for (let i = 0; i < n; i++) {
       const t = i / sr;
-      // Bright crack: white noise through a one-pole high-pass, fast decay.
+      // Bright crack: white noise through a one-pole high-pass.
       const white = Math.random() * 2 - 1;
-      const hp = white - hpPrevX + 0.92 * hpPrevY;
+      const hp = white - hpPrevX + 0.9 * hpPrevY;
       hpPrevX = white; hpPrevY = hp;
-      const crack = hp * Math.exp(-t * 28);
-      // Low thump for body.
-      const f = 55 + 130 * Math.exp(-t * 30);
-      const thump = Math.sin(2 * Math.PI * f * t) * Math.exp(-t * 16);
-      // Mix + soft clip for punch.
-      samples[i] = Math.tanh((crack * 0.9 + thump * 0.7) * 1.6);
+      const crack = hp * Math.exp(-t * 20);
+      // Low thump for body / chest punch.
+      const f = 60 + 150 * Math.exp(-t * 24);
+      const thump = Math.sin(2 * Math.PI * f * t) * Math.exp(-t * 12);
+      // Drive hard, then saturate. Heavy saturation maximizes RMS (perceived
+      // loudness) rather than just the peak, so the shot is genuinely LOUD
+      // instead of a quiet spike.
+      let s = Math.tanh((crack * 1.3 + thump * 1.1) * 4.0);
+      // Tiny fade at the very end to avoid an end-click.
+      if (t > dur - 0.01) s *= (dur - t) / 0.01;
+      samples[i] = s;
     }
-    // Normalize to near full scale.
+    // Normalize (already near full scale after the saturation stage).
     let peak = 0;
     for (let i = 0; i < n; i++) { const a = Math.abs(samples[i]); if (a > peak) peak = a; }
-    const g = peak > 0 ? 0.98 / peak : 1;
+    const g = peak > 0 ? 0.99 / peak : 1;
 
     // Encode as a mono 16-bit PCM WAV.
     const dataLen = n * 2;
@@ -220,32 +228,38 @@
   }
 
   function ensureGunAudio() {
-    if (!gunAudioEl) {
+    if (gunPool.length === 0) {
       try {
-        gunAudioEl = new Audio();
-        gunAudioEl.preload = 'auto';
-        gunAudioEl.src = buildGunshotDataURI();
-      } catch (_) { gunAudioEl = null; }
+        gunURI = gunURI || buildGunshotDataURI();
+        for (let i = 0; i < GUN_POOL_SIZE; i++) {
+          const el = new Audio();
+          el.preload = 'auto';
+          el.src = gunURI;
+          el.volume = 1.0;
+          gunPool.push(el);
+        }
+      } catch (_) { gunPool = []; }
     }
-    return gunAudioEl;
+    return gunPool;
   }
 
-  // Called within the Start-button gesture: resume Web Audio and "prime" the
-  // gunshot element with a muted play so iOS lets it fire later in the sequence.
+  // Called within the Start-button gesture: resume Web Audio and "prime" every
+  // pooled gunshot element with a muted play so iOS lets them fire later.
   function unlockAudio() {
     ensureAudio();
-    const el = ensureGunAudio();
-    if (!el) return;
-    try {
-      el.muted = true;
-      const p = el.play();
-      if (p && p.then) {
-        p.then(() => { el.pause(); el.currentTime = 0; el.muted = false; })
-         .catch(() => { el.muted = false; });
-      } else {
-        el.muted = false;
-      }
-    } catch (_) { el.muted = false; }
+    const pool = ensureGunAudio();
+    pool.forEach((el) => {
+      try {
+        el.muted = true;
+        const p = el.play();
+        if (p && p.then) {
+          p.then(() => { el.pause(); el.currentTime = 0; el.muted = false; })
+           .catch(() => { el.muted = false; });
+        } else {
+          el.muted = false;
+        }
+      } catch (_) { el.muted = false; }
+    });
   }
 
   // Speak a phrase; resolve when speech ends (or immediately if unsupported).
@@ -271,15 +285,16 @@
   // the iOS silent switch on); the Web Audio synthesis is layered on for extra
   // punch on devices where it isn't muted.
   function playGunshot() {
-    const el = ensureGunAudio();
-    if (el) {
+    const pool = ensureGunAudio();
+    pool.forEach((el) => {
       try {
         el.muted = false;
+        el.volume = 1.0;
         el.currentTime = 0;
         const p = el.play();
         if (p && p.catch) p.catch(() => {});
       } catch (_) {}
-    }
+    });
     playGunshotWebAudio();
   }
 
@@ -306,7 +321,7 @@
     noiseFilter.frequency.value = 800;
 
     const noiseGain = ctx.createGain();
-    noiseGain.gain.setValueAtTime(1.0, t0);
+    noiseGain.gain.setValueAtTime(1.8, t0);
     noiseGain.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
 
     noise.connect(noiseFilter).connect(noiseGain).connect(ctx.destination);
@@ -317,7 +332,7 @@
     osc.frequency.setValueAtTime(180, t0);
     osc.frequency.exponentialRampToValueAtTime(50, t0 + 0.12);
     const oscGain = ctx.createGain();
-    oscGain.gain.setValueAtTime(0.9, t0);
+    oscGain.gain.setValueAtTime(1.5, t0);
     oscGain.gain.exponentialRampToValueAtTime(0.001, t0 + 0.18);
     osc.connect(oscGain).connect(ctx.destination);
 
