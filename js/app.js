@@ -165,6 +165,89 @@
     return audioCtx;
   }
 
+  // Gunshot as an HTMLAudioElement. Web Audio output is silenced by the iOS
+  // hardware mute switch, but media-element playback is not — so the gunshot
+  // must go through an <audio> element to be heard reliably on phones.
+  let gunAudioEl = null;
+
+  function buildGunshotDataURI() {
+    const sr = 44100;
+    const dur = 0.35;
+    const n = Math.floor(sr * dur);
+    const samples = new Float32Array(n);
+    let hpPrevX = 0, hpPrevY = 0;
+    for (let i = 0; i < n; i++) {
+      const t = i / sr;
+      // Bright crack: white noise through a one-pole high-pass, fast decay.
+      const white = Math.random() * 2 - 1;
+      const hp = white - hpPrevX + 0.92 * hpPrevY;
+      hpPrevX = white; hpPrevY = hp;
+      const crack = hp * Math.exp(-t * 28);
+      // Low thump for body.
+      const f = 55 + 130 * Math.exp(-t * 30);
+      const thump = Math.sin(2 * Math.PI * f * t) * Math.exp(-t * 16);
+      // Mix + soft clip for punch.
+      samples[i] = Math.tanh((crack * 0.9 + thump * 0.7) * 1.6);
+    }
+    // Normalize to near full scale.
+    let peak = 0;
+    for (let i = 0; i < n; i++) { const a = Math.abs(samples[i]); if (a > peak) peak = a; }
+    const g = peak > 0 ? 0.98 / peak : 1;
+
+    // Encode as a mono 16-bit PCM WAV.
+    const dataLen = n * 2;
+    const buf = new ArrayBuffer(44 + dataLen);
+    const dv = new DataView(buf);
+    const wr = (off, s) => { for (let i = 0; i < s.length; i++) dv.setUint8(off + i, s.charCodeAt(i)); };
+    wr(0, 'RIFF'); dv.setUint32(4, 36 + dataLen, true); wr(8, 'WAVE');
+    wr(12, 'fmt '); dv.setUint32(16, 16, true); dv.setUint16(20, 1, true);
+    dv.setUint16(22, 1, true); dv.setUint32(24, sr, true);
+    dv.setUint32(28, sr * 2, true); dv.setUint16(32, 2, true); dv.setUint16(34, 16, true);
+    wr(36, 'data'); dv.setUint32(40, dataLen, true);
+    let off = 44;
+    for (let i = 0; i < n; i++) {
+      let v = Math.max(-1, Math.min(1, samples[i] * g));
+      dv.setInt16(off, v < 0 ? v * 0x8000 : v * 0x7fff, true);
+      off += 2;
+    }
+    // base64-encode the buffer for a self-contained data: URI.
+    const bytes = new Uint8Array(buf);
+    let bin = '';
+    for (let i = 0; i < bytes.length; i += 0x8000) {
+      bin += String.fromCharCode.apply(null, bytes.subarray(i, i + 0x8000));
+    }
+    return 'data:audio/wav;base64,' + btoa(bin);
+  }
+
+  function ensureGunAudio() {
+    if (!gunAudioEl) {
+      try {
+        gunAudioEl = new Audio();
+        gunAudioEl.preload = 'auto';
+        gunAudioEl.src = buildGunshotDataURI();
+      } catch (_) { gunAudioEl = null; }
+    }
+    return gunAudioEl;
+  }
+
+  // Called within the Start-button gesture: resume Web Audio and "prime" the
+  // gunshot element with a muted play so iOS lets it fire later in the sequence.
+  function unlockAudio() {
+    ensureAudio();
+    const el = ensureGunAudio();
+    if (!el) return;
+    try {
+      el.muted = true;
+      const p = el.play();
+      if (p && p.then) {
+        p.then(() => { el.pause(); el.currentTime = 0; el.muted = false; })
+         .catch(() => { el.muted = false; });
+      } else {
+        el.muted = false;
+      }
+    } catch (_) { el.muted = false; }
+  }
+
   // Speak a phrase; resolve when speech ends (or immediately if unsupported).
   function speak(text) {
     return new Promise((resolve) => {
@@ -184,8 +267,24 @@
     });
   }
 
-  // Synthesize a short, sharp gunshot-like report (noise burst + low thump).
+  // Fire the gunshot. Primary path is the HTMLAudio element (audible even with
+  // the iOS silent switch on); the Web Audio synthesis is layered on for extra
+  // punch on devices where it isn't muted.
   function playGunshot() {
+    const el = ensureGunAudio();
+    if (el) {
+      try {
+        el.muted = false;
+        el.currentTime = 0;
+        const p = el.play();
+        if (p && p.catch) p.catch(() => {});
+      } catch (_) {}
+    }
+    playGunshotWebAudio();
+  }
+
+  // Synthesize a short, sharp gunshot-like report (noise burst + low thump).
+  function playGunshotWebAudio() {
     const ctx = ensureAudio();
     if (!ctx) return;
     const t0 = ctx.currentTime;
@@ -367,7 +466,7 @@
     prevGray = null;
 
     // Ensure camera + audio are live (user gesture unlocks them here)
-    ensureAudio();
+    unlockAudio();
     const camOk = await startCamera();
     if (!camOk) { resetToIdle(); return; }
 
@@ -572,7 +671,7 @@
     beginSequence();
   });
 
-  enableCamBtn.addEventListener('click', () => { ensureAudio(); startCamera(); });
+  enableCamBtn.addEventListener('click', () => { unlockAudio(); startCamera(); });
 
   historyBtn.addEventListener('click', () => { renderHistory(); historyPanel.classList.remove('hidden'); });
   closeHistory.addEventListener('click', () => historyPanel.classList.add('hidden'));
@@ -618,6 +717,9 @@
   loadResults();
   renderHistory();
   resetToIdle();
+  // Build the gunshot WAV up front so it's decoded and ready before the first
+  // start (it still only plays after the Start gesture unlocks audio).
+  ensureGunAudio();
   // Attempt to start the camera immediately; if blocked we show the prompt.
   startCamera();
 })();
