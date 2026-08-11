@@ -23,8 +23,8 @@
 
   // ---- Constants -----------------------------------------------------------
   const ARM_DELAY_MS = 500;        // motion detection arms 0.5 s after "Set"
-  const GUN_MIN_MS = 800;          // earliest gunshot after "Set"
-  const GUN_MAX_MS = 2200;         // latest gunshot after "Set"
+  const GUN_MIN_MS = 1200;         // earliest gunshot after "Set"
+  const GUN_MAX_MS = 2600;         // latest gunshot after "Set"
   const QUICK_RT_MS = 100;         // World Athletics false-start threshold
   const STORE_KEY = 'trackstart.results.v1';
   const SETTINGS_KEY = 'trackstart.settings.v1';
@@ -175,29 +175,44 @@
 
   function buildGunshotDataURI() {
     const sr = 44100;
-    const dur = 0.4;
+    const dur = 0.5;
     const n = Math.floor(sr * dur);
     const samples = new Float32Array(n);
-    let hpPrevX = 0, hpPrevY = 0;
+
+    // Phone speakers are loudest in the midrange (~1-4 kHz), so concentrate the
+    // energy there with a band-pass (RBJ biquad) instead of a bright hiss or a
+    // sub thump the speaker can't reproduce. A sustained, hard-saturated
+    // mid-band burst reads as far LOUDER than a quick click at the same peak.
+    const fc = 2200, Q = 0.7;
+    const w0 = 2 * Math.PI * fc / sr;
+    const cw = Math.cos(w0), sw = Math.sin(w0);
+    const alpha = sw / (2 * Q);
+    const a0 = 1 + alpha;
+    const b0 = alpha / a0, b2 = -alpha / a0;   // b1 = 0
+    const a1 = (-2 * cw) / a0, a2 = (1 - alpha) / a0;
+    let x1 = 0, x2 = 0, y1 = 0, y2 = 0;
+
+    const attack = 0.003, sustainEnd = 0.15;
     for (let i = 0; i < n; i++) {
       const t = i / sr;
-      // Bright crack: white noise through a one-pole high-pass.
-      const white = Math.random() * 2 - 1;
-      const hp = white - hpPrevX + 0.9 * hpPrevY;
-      hpPrevX = white; hpPrevY = hp;
-      const crack = hp * Math.exp(-t * 20);
-      // Low thump for body / chest punch.
-      const f = 60 + 150 * Math.exp(-t * 24);
-      const thump = Math.sin(2 * Math.PI * f * t) * Math.exp(-t * 12);
-      // Drive hard, then saturate. Heavy saturation maximizes RMS (perceived
-      // loudness) rather than just the peak, so the shot is genuinely LOUD
-      // instead of a quiet spike.
-      let s = Math.tanh((crack * 1.3 + thump * 1.1) * 4.0);
-      // Tiny fade at the very end to avoid an end-click.
-      if (t > dur - 0.01) s *= (dur - t) / 0.01;
-      samples[i] = s;
+      // Band-passed white noise.
+      const x0 = Math.random() * 2 - 1;
+      const bp = b0 * x0 + b2 * x2 - a1 * y1 - a2 * y2;
+      x2 = x1; x1 = x0; y2 = y1; y1 = bp;
+      // A little low thump for body (small — phones barely reproduce lows).
+      const f = 70 + 120 * Math.exp(-t * 22);
+      const thump = Math.sin(2 * Math.PI * f * t) * Math.exp(-t * 10) * 0.3;
+      // Saturate the mid burst hard so its average level (perceived loudness)
+      // rails near full scale rather than being a quiet transient.
+      let s = Math.tanh(bp * 6.0) * 0.95 + thump;
+      // Amplitude envelope: fast attack, hold, then decay.
+      let env;
+      if (t < attack) env = t / attack;
+      else if (t < sustainEnd) env = 1;
+      else env = Math.exp(-(t - sustainEnd) * 11);
+      samples[i] = s * env;
     }
-    // Normalize (already near full scale after the saturation stage).
+    // Normalize to near full scale.
     let peak = 0;
     for (let i = 0; i < n; i++) { const a = Math.abs(samples[i]); if (a > peak) peak = a; }
     const g = peak > 0 ? 0.99 / peak : 1;
