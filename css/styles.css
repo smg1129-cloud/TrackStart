@@ -1,0 +1,338 @@
+:root {
+  --bg: #0b0f14;
+  --panel: #131a22;
+  --panel-2: #1b2530;
+  --text: #eaf2fb;
+  --muted: #93a1b1;
+  --accent: #35c46a;
+  --accent-2: #2aa0ff;
+  --danger: #ff4d4d;
+  --warn: #ffb020;
+  --shadow: 0 10px 30px rgba(0, 0, 0, 0.45);
+  --safe-top: env(safe-area-inset-top, 0px);
+  --safe-bottom: env(safe-area-inset-bottom, 0px);
+}
+
+* { box-sizing: border-box; }
+
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  overflow: hidden;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+
+#app {
+  position: fixed;
+  inset: 0;
+  overflow: hidden;
+}
+
+/* Camera feed fills the screen */
+#video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  background: #000;
+  z-index: 0;
+}
+
+/* Analysis canvas is off-screen (used only for pixel math) */
+#analysis {
+  position: absolute;
+  left: -9999px;
+  top: -9999px;
+  pointer-events: none;
+}
+
+/* A subtle darkening so the overlays read well over any scene */
+#app::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(180deg, rgba(0,0,0,0.45) 0%, rgba(0,0,0,0.0) 25%, rgba(0,0,0,0.0) 60%, rgba(0,0,0,0.55) 100%);
+  z-index: 1;
+  pointer-events: none;
+}
+
+/* ---------- Top bar ---------- */
+#topbar {
+  position: absolute;
+  top: calc(var(--safe-top) + 10px);
+  left: 0;
+  right: 0;
+  z-index: 3;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0 16px;
+}
+
+.best {
+  display: flex;
+  flex-direction: column;
+  line-height: 1.05;
+  background: rgba(11, 15, 20, 0.55);
+  backdrop-filter: blur(6px);
+  padding: 8px 14px;
+  border-radius: 14px;
+  border: 1px solid rgba(255,255,255,0.08);
+}
+.best-label {
+  font-size: 11px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.best-value {
+  font-size: 26px;
+  font-weight: 800;
+  color: var(--accent);
+  font-variant-numeric: tabular-nums;
+}
+
+.top-actions { display: flex; gap: 8px; }
+
+.icon-btn {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  border: 1px solid rgba(255,255,255,0.1);
+  background: rgba(11, 15, 20, 0.55);
+  backdrop-filter: blur(6px);
+  color: var(--text);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+}
+.icon-btn:active { transform: scale(0.96); }
+
+/* ---------- Center stage ---------- */
+#stage {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 0 20px;
+  pointer-events: none;
+}
+
+.status {
+  font-size: 18px;
+  font-weight: 600;
+  color: var(--text);
+  max-width: 22ch;
+  text-shadow: 0 2px 12px rgba(0,0,0,0.8);
+  transition: color 0.2s ease;
+}
+
+.big-display {
+  font-weight: 900;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  text-shadow: 0 4px 30px rgba(0,0,0,0.85);
+  margin-top: 6px;
+}
+
+/* countdown number */
+.big-display.count { font-size: min(42vw, 260px); color: var(--text); }
+/* command word (MARK / SET) */
+.big-display.command { font-size: min(20vw, 150px); letter-spacing: 0.02em; }
+/* result time */
+.big-display.result { font-size: min(24vw, 190px); color: var(--accent); }
+.big-display.result.slow { color: var(--text); }
+/* false start */
+.big-display.false { font-size: min(16vw, 120px); color: var(--danger); }
+
+.sub-display {
+  margin-top: 10px;
+  font-size: 18px;
+  font-weight: 700;
+  color: var(--muted);
+  letter-spacing: 0.02em;
+  text-shadow: 0 2px 12px rgba(0,0,0,0.8);
+}
+
+/* colour cues by phase (applied to body) */
+body.phase-mark .status { color: var(--accent-2); }
+body.phase-set .status { color: var(--warn); }
+body.phase-armed .status { color: var(--warn); }
+body.phase-fired .status { color: var(--accent); }
+
+/* ---------- Bottom controls ---------- */
+#controls {
+  position: absolute;
+  left: 0;
+  right: 0;
+  bottom: calc(var(--safe-bottom) + 22px);
+  z-index: 3;
+  display: flex;
+  justify-content: center;
+  padding: 0 20px;
+}
+
+.start-btn {
+  width: 100%;
+  max-width: 460px;
+  height: 76px;
+  border: none;
+  border-radius: 22px;
+  background: linear-gradient(180deg, var(--accent) 0%, #24a457 100%);
+  color: #04140a;
+  font-size: 26px;
+  font-weight: 900;
+  letter-spacing: 0.08em;
+  box-shadow: var(--shadow);
+  cursor: pointer;
+}
+.start-btn:active { transform: translateY(1px) scale(0.995); }
+.start-btn.running {
+  background: linear-gradient(180deg, #3a4756 0%, #2a3542 100%);
+  color: var(--text);
+}
+.start-btn.abort {
+  background: linear-gradient(180deg, #ff6a6a 0%, #d63c3c 100%);
+  color: #1a0505;
+}
+.start-btn:disabled { opacity: 0.6; }
+
+/* ---------- Overlays / panels ---------- */
+.overlay {
+  position: absolute;
+  inset: 0;
+  z-index: 10;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(4, 7, 10, 0.8);
+  backdrop-filter: blur(4px);
+  padding: 24px;
+}
+.overlay .card {
+  background: var(--panel);
+  border: 1px solid rgba(255,255,255,0.08);
+  border-radius: 18px;
+  padding: 24px;
+  max-width: 380px;
+  box-shadow: var(--shadow);
+  text-align: center;
+}
+.overlay .card h2 { margin: 0 0 10px; }
+.overlay .card p { color: var(--muted); font-size: 15px; line-height: 1.5; }
+
+.primary {
+  margin-top: 16px;
+  padding: 14px 22px;
+  border: none;
+  border-radius: 12px;
+  background: var(--accent-2);
+  color: #041018;
+  font-size: 16px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.panel {
+  position: absolute;
+  z-index: 9;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: min(88vw, 420px);
+  background: var(--panel);
+  border-left: 1px solid rgba(255,255,255,0.08);
+  box-shadow: var(--shadow);
+  display: flex;
+  flex-direction: column;
+  padding-top: var(--safe-top);
+}
+.panel-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 16px;
+  border-bottom: 1px solid rgba(255,255,255,0.08);
+}
+.panel-head h2 { margin: 0; font-size: 18px; }
+.panel-body { padding: 16px; overflow-y: auto; }
+.panel-foot {
+  margin-top: auto;
+  padding: 16px;
+  border-top: 1px solid rgba(255,255,255,0.08);
+  padding-bottom: calc(16px + var(--safe-bottom));
+}
+
+.history-list {
+  list-style: none;
+  margin: 0;
+  padding: 8px 0;
+  overflow-y: auto;
+  flex: 1;
+}
+.history-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 16px;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+}
+.history-list .rt {
+  font-size: 22px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+.history-list .rt.false { color: var(--danger); font-size: 16px; }
+.history-list .rt.best { color: var(--accent); }
+.history-list .meta { color: var(--muted); font-size: 12px; text-align: right; }
+.history-list .empty { color: var(--muted); justify-content: center; }
+
+.field { display: block; margin-bottom: 22px; }
+.field > span { display: block; font-weight: 700; margin-bottom: 8px; }
+.field small { display: block; color: var(--muted); font-size: 12px; margin-top: 6px; line-height: 1.4; }
+.field input[type="range"] { width: 100%; }
+.field .row { display: flex; align-items: center; gap: 12px; }
+.field .row output { font-variant-numeric: tabular-nums; font-weight: 700; min-width: 44px; }
+.field.toggle { display: flex; flex-direction: column; }
+
+.danger {
+  width: 100%;
+  padding: 14px;
+  border: 1px solid rgba(255,77,77,0.4);
+  border-radius: 12px;
+  background: rgba(255,77,77,0.12);
+  color: var(--danger);
+  font-weight: 800;
+  font-size: 15px;
+  cursor: pointer;
+}
+
+.hidden { display: none !important; }
+
+/* Flash the whole screen red on a false start, green on the gun */
+body.flash-red #app::before,
+body.flash-green #app::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  animation: flash 0.5s ease-out;
+}
+body.flash-red #app::before { background: var(--danger); }
+body.flash-green #app::before { background: var(--accent); }
+@keyframes flash {
+  0% { opacity: 0.55; }
+  100% { opacity: 0; }
+}

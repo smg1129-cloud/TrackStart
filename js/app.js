@@ -1,0 +1,623 @@
+/*
+ * TrackStart — block-start reaction timer for track athletes.
+ *
+ * Sequence when START is pressed:
+ *   1. "Runner, take your mark"   (spoken)      -> hold with on-screen countdown (default 10 s)
+ *   2. "Set"                      (spoken)      -> record setTime
+ *   3. Motion detection arms at setTime + 0.5 s (false-start window opens)
+ *   4. Gunshot at setTime + random(0.8 s .. 2.2 s)
+ *        - motion between arm and gun  -> FALSE START
+ *        - first motion at/after gun    -> reaction time = motionTime - gunTime
+ *   5. Result shown large on screen, stored, fastest tracked.
+ *   6. Pressing START again resets everything.
+ *
+ * Motion detection uses frame-to-frame pixel differencing on a small canvas.
+ * A per-pixel brightness threshold plus a minimum changed-area threshold keep
+ * small/low-energy movement (a few strands of hair, minor background flutter)
+ * from triggering, while whole-limb / body movement clears the bar. Tune with
+ * the sensitivity slider in Settings.
+ */
+
+(() => {
+  'use strict';
+
+  // ---- Constants -----------------------------------------------------------
+  const ARM_DELAY_MS = 500;        // motion detection arms 0.5 s after "Set"
+  const GUN_MIN_MS = 800;          // earliest gunshot after "Set"
+  const GUN_MAX_MS = 2200;         // latest gunshot after "Set"
+  const QUICK_RT_MS = 100;         // World Athletics false-start threshold
+  const STORE_KEY = 'trackstart.results.v1';
+  const SETTINGS_KEY = 'trackstart.settings.v1';
+
+  // ---- DOM -----------------------------------------------------------------
+  const el = (id) => document.getElementById(id);
+  const video = el('video');
+  const analysis = el('analysis');
+  const actx = analysis.getContext('2d', { willReadFrequently: true });
+
+  const statusEl = el('status');
+  const bigEl = el('bigDisplay');
+  const subEl = el('subDisplay');
+  const bestEl = el('bestTime');
+  const startBtn = el('startBtn');
+
+  const camPrompt = el('camPrompt');
+  const camMsg = el('camMsg');
+  const enableCamBtn = el('enableCamBtn');
+
+  const historyBtn = el('historyBtn');
+  const historyPanel = el('historyPanel');
+  const historyList = el('historyList');
+  const closeHistory = el('closeHistory');
+  const clearHistory = el('clearHistory');
+
+  const settingsBtn = el('settingsBtn');
+  const settingsPanel = el('settingsPanel');
+  const closeSettings = el('closeSettings');
+  const sensitivityInput = el('sensitivity');
+  const markHoldInput = el('markHold');
+  const markHoldOut = el('markHoldOut');
+  const flagQuickInput = el('flagQuick');
+
+  // ---- State ---------------------------------------------------------------
+  const State = {
+    IDLE: 'idle',
+    MARK: 'mark',
+    SET: 'set',
+    ARMED: 'armed',   // false-start window is open
+    FIRED: 'fired',   // gun has gone, measuring reaction
+    DONE: 'done',
+  };
+  let state = State.IDLE;
+
+  let settings = {
+    sensitivity: 8,     // 1..20
+    markHold: 10,       // seconds
+    flagQuick: true,
+  };
+
+  let results = [];     // { rt: number|null, false: bool, quick: bool, ts: number }
+  let bestRt = null;
+
+  let stream = null;
+  let motionRunning = false;
+  let prevGray = null;
+
+  // Per-run scheduling / timing
+  let timers = [];
+  let setTime = 0;
+  let armTime = 0;
+  let gunTime = 0;
+  let gunFired = false;
+  let reactionCaptured = false;
+  let countdownRAF = null;
+
+  // ---- Utilities -----------------------------------------------------------
+  const now = () => performance.now();
+
+  function clearTimers() {
+    timers.forEach((t) => clearTimeout(t));
+    timers = [];
+    if (countdownRAF) { cancelAnimationFrame(countdownRAF); countdownRAF = null; }
+  }
+  function later(fn, ms) { const t = setTimeout(fn, ms); timers.push(t); return t; }
+
+  function setPhaseClass(name) {
+    document.body.classList.remove('phase-mark', 'phase-set', 'phase-armed', 'phase-fired');
+    if (name) document.body.classList.add('phase-' + name);
+  }
+
+  function flash(color) {
+    const cls = color === 'red' ? 'flash-red' : 'flash-green';
+    document.body.classList.remove('flash-red', 'flash-green');
+    // force reflow so the animation restarts
+    void document.body.offsetWidth;
+    document.body.classList.add(cls);
+    setTimeout(() => document.body.classList.remove(cls), 520);
+  }
+
+  function fmt(ms) {
+    if (ms == null) return '—';
+    return (ms / 1000).toFixed(3) + 's';
+  }
+
+  // ---- Persistence ---------------------------------------------------------
+  function loadSettings() {
+    try {
+      const s = JSON.parse(localStorage.getItem(SETTINGS_KEY) || '{}');
+      settings = Object.assign(settings, s);
+    } catch (_) { /* ignore */ }
+    sensitivityInput.value = settings.sensitivity;
+    markHoldInput.value = settings.markHold;
+    markHoldOut.textContent = settings.markHold + ' s';
+    flagQuickInput.checked = !!settings.flagQuick;
+  }
+  function saveSettings() {
+    try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch (_) {}
+  }
+
+  function loadResults() {
+    try {
+      results = JSON.parse(localStorage.getItem(STORE_KEY) || '[]');
+      if (!Array.isArray(results)) results = [];
+    } catch (_) { results = []; }
+    recomputeBest();
+  }
+  function saveResults() {
+    try { localStorage.setItem(STORE_KEY, JSON.stringify(results)); } catch (_) {}
+  }
+  function recomputeBest() {
+    bestRt = null;
+    for (const r of results) {
+      if (!r.false && r.rt != null && (bestRt == null || r.rt < bestRt)) bestRt = r.rt;
+    }
+    bestEl.textContent = bestRt == null ? '—' : fmt(bestRt);
+  }
+
+  // ---- Audio ---------------------------------------------------------------
+  let audioCtx = null;
+  function ensureAudio() {
+    if (!audioCtx) {
+      const AC = window.AudioContext || window.webkitAudioContext;
+      if (AC) audioCtx = new AC();
+    }
+    if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+    return audioCtx;
+  }
+
+  // Speak a phrase; resolve when speech ends (or immediately if unsupported).
+  function speak(text) {
+    return new Promise((resolve) => {
+      try {
+        if (!('speechSynthesis' in window)) return resolve();
+        window.speechSynthesis.cancel();
+        const u = new SpeechSynthesisUtterance(text);
+        u.rate = 1.0;
+        u.pitch = 1.0;
+        u.volume = 1.0;
+        u.onend = () => resolve();
+        u.onerror = () => resolve();
+        window.speechSynthesis.speak(u);
+        // Safety net in case the engine never fires onend
+        setTimeout(resolve, 2500);
+      } catch (_) { resolve(); }
+    });
+  }
+
+  // Synthesize a short, sharp gunshot-like report (noise burst + low thump).
+  function playGunshot() {
+    const ctx = ensureAudio();
+    if (!ctx) return;
+    const t0 = ctx.currentTime;
+
+    // White-noise crack
+    const dur = 0.25;
+    const buffer = ctx.createBuffer(1, Math.floor(ctx.sampleRate * dur), ctx.sampleRate);
+    const data = buffer.getChannelData(0);
+    for (let i = 0; i < data.length; i++) {
+      // fast exponential decay
+      const env = Math.pow(1 - i / data.length, 3);
+      data[i] = (Math.random() * 2 - 1) * env;
+    }
+    const noise = ctx.createBufferSource();
+    noise.buffer = buffer;
+
+    const noiseFilter = ctx.createBiquadFilter();
+    noiseFilter.type = 'highpass';
+    noiseFilter.frequency.value = 800;
+
+    const noiseGain = ctx.createGain();
+    noiseGain.gain.setValueAtTime(1.0, t0);
+    noiseGain.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
+
+    noise.connect(noiseFilter).connect(noiseGain).connect(ctx.destination);
+
+    // Low-frequency thump for body
+    const osc = ctx.createOscillator();
+    osc.type = 'sine';
+    osc.frequency.setValueAtTime(180, t0);
+    osc.frequency.exponentialRampToValueAtTime(50, t0 + 0.12);
+    const oscGain = ctx.createGain();
+    oscGain.gain.setValueAtTime(0.9, t0);
+    oscGain.gain.exponentialRampToValueAtTime(0.001, t0 + 0.18);
+    osc.connect(oscGain).connect(ctx.destination);
+
+    noise.start(t0);
+    noise.stop(t0 + dur);
+    osc.start(t0);
+    osc.stop(t0 + 0.2);
+  }
+
+  // Short beep used for the visible countdown ticks (optional cue).
+  function tick(freq = 660, dur = 0.06) {
+    const ctx = ensureAudio();
+    if (!ctx) return;
+    const t0 = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const g = ctx.createGain();
+    osc.type = 'square';
+    osc.frequency.value = freq;
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(0.15, t0 + 0.005);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    osc.connect(g).connect(ctx.destination);
+    osc.start(t0);
+    osc.stop(t0 + dur);
+  }
+
+  // ---- Camera --------------------------------------------------------------
+  async function startCamera() {
+    if (stream) return true;
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      camMsg.textContent = 'This browser does not support camera access (getUserMedia).';
+      camPrompt.classList.remove('hidden');
+      return false;
+    }
+    try {
+      stream = await navigator.mediaDevices.getUserMedia({
+        audio: false,
+        video: {
+          facingMode: 'environment',
+          width: { ideal: 1280 },
+          height: { ideal: 720 },
+          frameRate: { ideal: 60, max: 60 },
+        },
+      });
+      video.srcObject = stream;
+      await video.play().catch(() => {});
+      camPrompt.classList.add('hidden');
+      startMotionLoop();
+      return true;
+    } catch (err) {
+      let msg = 'Camera access was blocked. ';
+      if (location.protocol !== 'https:' && location.hostname !== 'localhost') {
+        msg += 'The page must be served over HTTPS (e.g. GitHub Pages) or on localhost for the camera to work.';
+      } else {
+        msg += 'Please allow camera access in your browser settings and try again.';
+      }
+      camMsg.textContent = msg;
+      camPrompt.classList.remove('hidden');
+      return false;
+    }
+  }
+
+  // ---- Motion detection ----------------------------------------------------
+  // Returns the fraction (0..1) of sampled pixels that changed noticeably
+  // since the previous analysed frame.
+  function analyzeFrame() {
+    const w = analysis.width, h = analysis.height;
+    try {
+      actx.drawImage(video, 0, 0, w, h);
+    } catch (_) {
+      return 0; // video not ready yet
+    }
+    const frame = actx.getImageData(0, 0, w, h).data;
+    const n = w * h;
+    const gray = new Uint8ClampedArray(n);
+    for (let i = 0, p = 0; i < n; i++, p += 4) {
+      // luma
+      gray[i] = (frame[p] * 0.299 + frame[p + 1] * 0.587 + frame[p + 2] * 0.114) | 0;
+    }
+    if (!prevGray) { prevGray = gray; return 0; }
+
+    // Per-pixel brightness threshold derived from sensitivity (1..20).
+    // Higher sensitivity -> lower pixel threshold (smaller changes count).
+    const pixelThresh = 42 - settings.sensitivity * 1.6; // ~40 (low) .. ~10 (high)
+    let changed = 0;
+    for (let i = 0; i < n; i++) {
+      const d = gray[i] - prevGray[i];
+      if ((d < 0 ? -d : d) > pixelThresh) changed++;
+    }
+    prevGray = gray;
+    return changed / n;
+  }
+
+  function motionThreshold() {
+    // Minimum fraction of the frame that must change to count as "real" motion.
+    // Higher sensitivity -> smaller required area.
+    // sensitivity 1  -> ~3.5% of frame ; sensitivity 20 -> ~0.4% of frame
+    return Math.max(0.004, 0.037 - settings.sensitivity * 0.0017);
+  }
+
+  function startMotionLoop() {
+    if (motionRunning) return;
+    motionRunning = true;
+    prevGray = null;
+
+    const hasRVFC = 'requestVideoFrameCallback' in HTMLVideoElement.prototype;
+
+    const step = () => {
+      if (!motionRunning) return;
+      const frac = analyzeFrame();
+      handleMotion(frac);
+      if (hasRVFC) {
+        video.requestVideoFrameCallback(step);
+      } else {
+        requestAnimationFrame(step);
+      }
+    };
+
+    if (hasRVFC) video.requestVideoFrameCallback(step);
+    else requestAnimationFrame(step);
+  }
+
+  // Called every analysed frame with the changed-area fraction.
+  function handleMotion(frac) {
+    if (state !== State.ARMED && state !== State.FIRED) return;
+    const t = now();
+    const moved = frac >= motionThreshold();
+    if (!moved) return;
+
+    if (state === State.ARMED) {
+      // Movement before the gun -> false start.
+      onFalseStart();
+    } else if (state === State.FIRED && !reactionCaptured) {
+      reactionCaptured = true;
+      const rt = t - gunTime;
+      onReaction(rt);
+    }
+  }
+
+  // ---- Run sequence --------------------------------------------------------
+  async function beginSequence() {
+    // Reset run state
+    clearTimers();
+    gunFired = false;
+    reactionCaptured = false;
+    prevGray = null;
+
+    // Ensure camera + audio are live (user gesture unlocks them here)
+    ensureAudio();
+    const camOk = await startCamera();
+    if (!camOk) { resetToIdle(); return; }
+
+    bigEl.className = 'big-display';
+    subEl.textContent = '';
+    startBtn.textContent = 'ABORT';
+    startBtn.classList.add('running', 'abort');
+
+    // --- Phase 1: take your mark + countdown ---
+    state = State.MARK;
+    setPhaseClass('mark');
+    statusEl.textContent = 'Runner, take your mark…';
+    bigEl.className = 'big-display command';
+    bigEl.textContent = 'MARK';
+    speak('Runner, take your mark');
+
+    const holdMs = settings.markHold * 1000;
+    const holdStart = now();
+
+    // Show a live countdown; brief command word first, then numbers.
+    later(() => runCountdown(holdStart, holdMs), 900);
+  }
+
+  function runCountdown(holdStart, holdMs) {
+    if (state !== State.MARK) return;
+    bigEl.className = 'big-display count';
+    let lastShown = -1;
+
+    const tickLoop = () => {
+      if (state !== State.MARK) return;
+      const elapsed = now() - holdStart;
+      const remain = Math.max(0, holdMs - elapsed);
+      const secs = Math.ceil(remain / 1000);
+      if (secs !== lastShown) {
+        lastShown = secs;
+        bigEl.textContent = secs > 0 ? String(secs) : '';
+        if (secs > 0 && secs <= 5) tick(600, 0.05);
+      }
+      if (remain <= 0) { goToSet(); return; }
+      countdownRAF = requestAnimationFrame(tickLoop);
+    };
+    countdownRAF = requestAnimationFrame(tickLoop);
+  }
+
+  function goToSet() {
+    if (countdownRAF) { cancelAnimationFrame(countdownRAF); countdownRAF = null; }
+    state = State.SET;
+    setPhaseClass('set');
+    statusEl.textContent = 'Set…';
+    bigEl.className = 'big-display command';
+    bigEl.textContent = 'SET';
+    setTime = now();
+    speak('Set');
+
+    // Random gun delay in [0.8, 2.2] s after "Set".
+    const gunDelay = GUN_MIN_MS + Math.random() * (GUN_MAX_MS - GUN_MIN_MS);
+    gunTime = setTime + gunDelay;
+    armTime = setTime + ARM_DELAY_MS;
+
+    // Arm motion detection 0.5 s after "Set".
+    later(() => {
+      if (state !== State.SET) return;
+      state = State.ARMED;
+      setPhaseClass('armed');
+      statusEl.textContent = 'Hold… watching for movement';
+      bigEl.textContent = '';
+      prevGray = null; // fresh baseline the instant we start judging
+    }, ARM_DELAY_MS);
+
+    // Fire the gun.
+    later(fireGun, gunDelay);
+  }
+
+  function fireGun() {
+    if (state !== State.ARMED && state !== State.SET) return; // aborted / false-started
+    state = State.FIRED;
+    gunFired = true;
+    gunTime = now();           // exact moment sound is triggered
+    reactionCaptured = false;
+    prevGray = null;           // baseline at the gun so first post-gun move is caught
+    setPhaseClass('fired');
+    playGunshot();
+    flash('green');
+    statusEl.textContent = 'GO!';
+    bigEl.className = 'big-display';
+    bigEl.textContent = '';
+
+    // If no motion is detected within a generous window, still close out.
+    later(() => {
+      if (state === State.FIRED && !reactionCaptured) {
+        state = State.DONE;
+        statusEl.textContent = 'No movement detected';
+        subEl.textContent = 'Try increasing sensitivity in Settings';
+        finishRun();
+      }
+    }, 4000);
+  }
+
+  function onFalseStart() {
+    clearTimers();
+    state = State.DONE;
+    setPhaseClass(null);
+    flash('red');
+    statusEl.textContent = 'Moved before the gun';
+    bigEl.className = 'big-display false';
+    bigEl.textContent = 'FALSE START';
+    subEl.textContent = '';
+    speak('False start');
+    recordResult({ rt: null, false: true, quick: false });
+    finishRun();
+  }
+
+  function onReaction(rt) {
+    clearTimers();
+    state = State.DONE;
+    setPhaseClass('fired');
+    const quick = settings.flagQuick && rt < QUICK_RT_MS;
+    statusEl.textContent = quick ? 'Reaction faster than 0.100 s' : 'Reaction time';
+    bigEl.className = 'big-display result' + (quick ? ' slow' : '');
+    bigEl.textContent = fmt(rt);
+
+    if (quick) {
+      // Under 0.100 s is ruled a false start by World Athletics.
+      bigEl.className = 'big-display false';
+      bigEl.textContent = fmt(rt);
+      subEl.textContent = 'FALSE START (under 0.100 s)';
+      flash('red');
+      recordResult({ rt, false: true, quick: true });
+    } else {
+      subEl.textContent = (bestRt != null && rt < bestRt) ? 'New best!' : '';
+      recordResult({ rt, false: false, quick: false });
+    }
+    finishRun();
+  }
+
+  function recordResult(r) {
+    r.ts = Date.now();
+    results.unshift(r);
+    if (results.length > 200) results.length = 200;
+    saveResults();
+    recomputeBest();
+    renderHistory();
+  }
+
+  function finishRun() {
+    startBtn.textContent = 'START';
+    startBtn.classList.remove('running', 'abort');
+    // Leave the result on screen until the next START.
+  }
+
+  function resetToIdle() {
+    clearTimers();
+    state = State.IDLE;
+    setPhaseClass(null);
+    startBtn.textContent = 'START';
+    startBtn.classList.remove('running', 'abort');
+    statusEl.textContent = 'Tap START when the athlete is set in the blocks';
+    bigEl.className = 'big-display';
+    bigEl.textContent = '';
+    subEl.textContent = '';
+    try { window.speechSynthesis && window.speechSynthesis.cancel(); } catch (_) {}
+  }
+
+  // ---- History rendering ---------------------------------------------------
+  function renderHistory() {
+    historyList.innerHTML = '';
+    if (results.length === 0) {
+      const li = document.createElement('li');
+      li.className = 'empty';
+      li.textContent = 'No starts yet';
+      historyList.appendChild(li);
+      return;
+    }
+    results.forEach((r) => {
+      const li = document.createElement('li');
+      const rt = document.createElement('span');
+      const meta = document.createElement('span');
+      meta.className = 'meta';
+
+      if (r.false) {
+        rt.className = 'rt false';
+        rt.textContent = r.quick ? fmt(r.rt) + ' · <0.100' : 'False start';
+      } else {
+        rt.className = 'rt' + (bestRt != null && r.rt === bestRt ? ' best' : '');
+        rt.textContent = fmt(r.rt);
+      }
+      const d = new Date(r.ts);
+      meta.textContent = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+      li.appendChild(rt);
+      li.appendChild(meta);
+      historyList.appendChild(li);
+    });
+  }
+
+  // ---- Event wiring --------------------------------------------------------
+  startBtn.addEventListener('click', () => {
+    // If a run is in progress, START acts as ABORT / reset.
+    if (state !== State.IDLE && state !== State.DONE) {
+      resetToIdle();
+      return;
+    }
+    beginSequence();
+  });
+
+  enableCamBtn.addEventListener('click', () => { ensureAudio(); startCamera(); });
+
+  historyBtn.addEventListener('click', () => { renderHistory(); historyPanel.classList.remove('hidden'); });
+  closeHistory.addEventListener('click', () => historyPanel.classList.add('hidden'));
+  clearHistory.addEventListener('click', () => {
+    results = [];
+    saveResults();
+    recomputeBest();
+    renderHistory();
+  });
+
+  settingsBtn.addEventListener('click', () => settingsPanel.classList.remove('hidden'));
+  closeSettings.addEventListener('click', () => settingsPanel.classList.add('hidden'));
+
+  sensitivityInput.addEventListener('input', (e) => {
+    settings.sensitivity = parseInt(e.target.value, 10);
+    saveSettings();
+  });
+  markHoldInput.addEventListener('input', (e) => {
+    settings.markHold = parseInt(e.target.value, 10);
+    markHoldOut.textContent = settings.markHold + ' s';
+    saveSettings();
+  });
+  flagQuickInput.addEventListener('change', (e) => {
+    settings.flagQuick = e.target.checked;
+    saveSettings();
+  });
+
+  // Warm up speech synthesis voice list (some browsers load async).
+  if ('speechSynthesis' in window) {
+    window.speechSynthesis.getVoices();
+    window.speechSynthesis.onvoiceschanged = () => window.speechSynthesis.getVoices();
+  }
+
+  // Register service worker for installability / offline (optional).
+  if ('serviceWorker' in navigator) {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('sw.js').catch(() => {});
+    });
+  }
+
+  // ---- Init ----------------------------------------------------------------
+  loadSettings();
+  loadResults();
+  renderHistory();
+  resetToIdle();
+  // Attempt to start the camera immediately; if blocked we show the prompt.
+  startCamera();
+})();

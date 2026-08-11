@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover" />
+  <meta name="theme-color" content="#0b0f14" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="TrackStart" />
+  <title>TrackStart — Block Start Reaction Timer</title>
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" href="icons/icon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="icons/icon.svg" />
+  <link rel="stylesheet" href="css/styles.css" />
+</head>
+<body>
+  <div id="app">
+    <!-- Camera feed -->
+    <video id="video" playsinline autoplay muted></video>
+    <!-- Hidden canvas used for motion analysis -->
+    <canvas id="analysis" width="192" height="144"></canvas>
+
+    <!-- Top bar: fastest time + history/settings buttons -->
+    <header id="topbar">
+      <div class="best">
+        <span class="best-label">Fastest</span>
+        <span id="bestTime" class="best-value">—</span>
+      </div>
+      <div class="top-actions">
+        <button id="historyBtn" class="icon-btn" aria-label="History" title="History">≡</button>
+        <button id="settingsBtn" class="icon-btn" aria-label="Settings" title="Settings">⚙</button>
+      </div>
+    </header>
+
+    <!-- Center overlay: status / countdown / result -->
+    <main id="stage">
+      <div id="status" class="status">Tap START when the athlete is set in the blocks</div>
+      <div id="bigDisplay" class="big-display" aria-live="polite"></div>
+      <div id="subDisplay" class="sub-display"></div>
+    </main>
+
+    <!-- Bottom control -->
+    <footer id="controls">
+      <button id="startBtn" class="start-btn">START</button>
+    </footer>
+
+    <!-- Camera permission / error prompt -->
+    <div id="camPrompt" class="overlay hidden">
+      <div class="card">
+        <h2>Camera needed</h2>
+        <p id="camMsg">This app needs camera access to detect the athlete's motion. It must be opened over HTTPS (e.g. GitHub Pages) or on localhost.</p>
+        <button id="enableCamBtn" class="primary">Enable camera</button>
+      </div>
+    </div>
+
+    <!-- History panel -->
+    <div id="historyPanel" class="panel hidden">
+      <div class="panel-head">
+        <h2>Session results</h2>
+        <button id="closeHistory" class="icon-btn" aria-label="Close">✕</button>
+      </div>
+      <ul id="historyList" class="history-list"></ul>
+      <div class="panel-foot">
+        <button id="clearHistory" class="danger">Clear all</button>
+      </div>
+    </div>
+
+    <!-- Settings panel -->
+    <div id="settingsPanel" class="panel hidden">
+      <div class="panel-head">
+        <h2>Settings</h2>
+        <button id="closeSettings" class="icon-btn" aria-label="Close">✕</button>
+      </div>
+      <div class="panel-body">
+        <label class="field">
+          <span>Motion sensitivity</span>
+          <input id="sensitivity" type="range" min="1" max="20" step="1" />
+          <small>Higher = more sensitive. Lower this if hair, clothing flutter, or background movement triggers false starts.</small>
+        </label>
+        <label class="field">
+          <span>"Take your mark" hold</span>
+          <div class="row">
+            <input id="markHold" type="range" min="3" max="15" step="1" />
+            <output id="markHoldOut">10 s</output>
+          </div>
+          <small>Seconds to hold after the "take your mark" command.</small>
+        </label>
+        <label class="field">
+          <span>Set → gun delay</span>
+          <small>Randomised between 0.8 s and 2.2 s each start (per starting rules). Motion detection arms 0.5 s after "Set".</small>
+        </label>
+        <label class="field toggle">
+          <span>Flag reactions under 0.100 s</span>
+          <input id="flagQuick" type="checkbox" />
+          <small>World Athletics treats a reaction faster than 0.100 s as a false start (humanly impossible).</small>
+        </label>
+      </div>
+    </div>
+  </div>
+
+  <script src="js/app.js"></script>
+</body>
+</html>
