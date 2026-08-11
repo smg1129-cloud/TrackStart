@@ -31,8 +31,9 @@ jobs:
       - name: Configure Pages
         uses: actions/configure-pages@v5
         with:
-          # Auto-enable Pages (Source: GitHub Actions) on first run so no
-          # manual repo-settings toggle is needed.
+          # Best-effort auto-enable. On many repos the Actions token cannot
+          # CREATE the Pages site, so if this fails, enable Pages once under
+          # repo Settings -> Pages -> Source: GitHub Actions, then re-run.
           enablement: true
 
       - name: Upload site
