@@ -83,6 +83,10 @@
   let stream = null;
   let motionRunning = false;
   let refGray = null;      // frozen reference frame (the still "set" pose)
+  let motionMask = null;   // reusable per-pixel change mask
+  let motionHist = null;   // reusable histogram for median-shift compensation
+  let motionStreak = 0;    // consecutive frames over threshold (debounce)
+  let firstMotionT = 0;    // timestamp of the first over-threshold frame
 
   // Per-run scheduling / timing
   let timers = [];
@@ -435,13 +439,30 @@
     }
     if (!refGray) { refGray = gray; return 0; }
 
+    // Compensate for GLOBAL brightness/exposure drift: the phone's auto-exposure
+    // shifts the whole frame at once, which against a frozen reference would look
+    // like full-frame "motion". Subtract the MEDIAN signed difference (via a
+    // histogram) — the median tracks the uniform lighting shift but is unmoved by
+    // a large moving object, so it removes drift without masking real movement.
+    const hist = motionHist || (motionHist = new Int32Array(512));
+    hist.fill(0);
+    for (let i = 0; i < n; i++) hist[(gray[i] - refGray[i]) + 255]++;
+    let cum = 0, medianShift = 0; const half = n >> 1;
+    for (let b = 0; b < 512; b++) { cum += hist[b]; if (cum >= half) { medianShift = b - 255; break; } }
+
     // Per-pixel brightness threshold derived from sensitivity (1..20).
-    // Higher sensitivity -> lower pixel threshold (smaller changes count).
-    const pixelThresh = 38 - settings.sensitivity * 1.5; // ~36 (low) .. ~8 (high)
-    let changed = 0;
+    const pixelThresh = 40 - settings.sensitivity * 1.5; // ~38 (low) .. ~10 (high)
+    const mask = motionMask && motionMask.length === n ? motionMask : (motionMask = new Uint8Array(n));
     for (let i = 0; i < n; i++) {
-      const d = gray[i] - refGray[i];   // vs the FROZEN reference, not prev frame
-      if ((d < 0 ? -d : d) > pixelThresh) changed++;
+      const d = (gray[i] - refGray[i]) - medianShift;
+      mask[i] = ((d < 0 ? -d : d) > pixelThresh) ? 1 : 0;
+    }
+    // Reject isolated speckle (sensor noise, sub-pixel shake, JPEG artifacts):
+    // only count a changed pixel if a horizontal neighbour also changed, so a
+    // real moving edge/limb survives but lone hot pixels don't.
+    let changed = 0;
+    for (let i = 1; i < n - 1; i++) {
+      if (mask[i] && (mask[i - 1] || mask[i + 1])) changed++;
     }
     return changed / n;
   }
@@ -478,20 +499,24 @@
     else requestAnimationFrame(step);
   }
 
-  // Called every analysed frame with the changed-area fraction.
+  // Called every analysed frame with the changed-area fraction. Requires two
+  // consecutive over-threshold frames to fire (debounce), but timestamps the
+  // FIRST of them so reaction timing stays accurate.
   function handleMotion(frac) {
     if (state !== State.ARMED && state !== State.FIRED) return;
-    const t = now();
     const moved = frac >= motionThreshold();
-    if (!moved) return;
+    if (!moved) { motionStreak = 0; return; }
+
+    if (motionStreak === 0) firstMotionT = now();
+    motionStreak++;
+    if (motionStreak < 2) return; // need confirmation on the next frame
 
     if (state === State.ARMED) {
       // Movement before the gun -> false start.
       onFalseStart();
     } else if (state === State.FIRED && !reactionCaptured) {
       reactionCaptured = true;
-      const rt = t - gunTime;
-      onReaction(rt);
+      onReaction(firstMotionT - gunTime);
     }
   }
 
@@ -571,7 +596,8 @@
       setPhaseClass('armed');
       statusEl.textContent = 'Hold… watching for movement';
       bigEl.textContent = '';
-      refGray = null; // freeze the set pose as the reference on the next frame
+      refGray = null;      // freeze the set pose as the reference on the next frame
+      motionStreak = 0;
     }, ARM_DELAY_MS);
 
     // Fire the gun.
@@ -585,6 +611,7 @@
     gunTime = now();           // exact moment sound is triggered
     reactionCaptured = false;
     refGray = null;            // re-freeze the set pose at the gun as reference
+    motionStreak = 0;
     setPhaseClass('fired');
     playGunshot();
     flash('green');
