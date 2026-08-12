@@ -24,8 +24,8 @@
   // ---- Constants -----------------------------------------------------------
   const ARM_DELAY_MS = 1000;       // motion detection arms 1.0 s after "Set"
                                    // (lets the runner settle into set position)
-  const GUN_MIN_MS = 1200;         // earliest gunshot after "Set"
-  const GUN_MAX_MS = 2600;         // latest gunshot after "Set"
+  const GUN_MIN_MS = 2200;         // earliest gunshot after "Set"
+  const GUN_MAX_MS = 3200;         // latest gunshot after "Set"
   const QUICK_RT_MS = 100;         // World Athletics false-start threshold
   const STORE_KEY = 'trackstart.results.v1';
   const SETTINGS_KEY = 'trackstart.settings.v1';
