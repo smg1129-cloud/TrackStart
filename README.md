@@ -20,7 +20,7 @@ When you press **START**, the app:
 2. Speaks **"Set"**.
 3. **2.0 s after "Set"**, motion detection **arms**. Any body movement from here
    until the gun is flagged as a **FALSE START**.
-4. Fires a **gunshot** at a **random time between 2.2 s and 3.2 s** after "Set"
+4. Fires a **gunshot** at a **random time between 3.2 s and 4.2 s** after "Set"
    (so the athlete can't anticipate it).
 5. After the gun, it watches the camera and records the **time between the gun
    and the athlete's first movement** — shown in large print on screen.
