@@ -46,6 +46,9 @@
   const camMsg = el('camMsg');
   const enableCamBtn = el('enableCamBtn');
 
+  const roiEl = el('roi');
+  const roiHandle = el('roiHandle');
+  const regionBtn = el('regionBtn');
   const testGunBtn = el('testGunBtn');
   const historyBtn = el('historyBtn');
   const historyPanel = el('historyPanel');
@@ -76,6 +79,9 @@
     sensitivity: 11,    // 1..20
     markHold: 10,       // seconds
     flagQuick: true,
+    // Detection zone, normalised to the viewport (0..1). Motion is only
+    // measured inside this box, so background movement outside it is ignored.
+    roi: { x: 0.15, y: 0.35, w: 0.70, h: 0.45 },
   };
 
   let results = [];     // { rt: number|null, false: bool, quick: bool, ts: number }
@@ -139,9 +145,28 @@
     markHoldInput.value = settings.markHold;
     markHoldOut.textContent = settings.markHold + ' s';
     flagQuickInput.checked = !!settings.flagQuick;
+    // Sanitize the detection zone in case of malformed stored data.
+    const r = settings.roi || {};
+    settings.roi = {
+      x: clamp01(r.x, 0.15), y: clamp01(r.y, 0.35),
+      w: clamp01(r.w, 0.70), h: clamp01(r.h, 0.45),
+    };
+    applyRoiStyle();
   }
   function saveSettings() {
     try { localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings)); } catch (_) {}
+  }
+
+  function clamp01(v, fallback) {
+    v = typeof v === 'number' ? v : fallback;
+    return Math.max(0, Math.min(1, v));
+  }
+  function applyRoiStyle() {
+    const r = settings.roi;
+    roiEl.style.left = (r.x * 100) + '%';
+    roiEl.style.top = (r.y * 100) + '%';
+    roiEl.style.width = (r.w * 100) + '%';
+    roiEl.style.height = (r.h * 100) + '%';
   }
 
   function loadResults() {
@@ -424,10 +449,36 @@
   // that fixed reference, so as soon as the athlete begins to leave the set
   // position the changed area grows and stays large — a reliable "first motion"
   // trigger, unlike frame-to-frame diffing which only sees motion mid-stride.
+  // Map the on-screen detection zone (viewport-normalised) to source-video
+  // pixels, accounting for the object-fit:cover crop of the <video> element,
+  // so we analyse exactly the region the user boxed.
+  function roiSourceRect() {
+    const vw = video.videoWidth, vh = video.videoHeight;
+    if (!vw || !vh) return null;
+    const boxW = video.clientWidth || window.innerWidth;
+    const boxH = video.clientHeight || window.innerHeight;
+    const scale = Math.max(boxW / vw, boxH / vh); // cover
+    const offX = (boxW - vw * scale) / 2;
+    const offY = (boxH - vh * scale) / 2;
+    const r = settings.roi;
+    let sx = (r.x * boxW - offX) / scale;
+    let sy = (r.y * boxH - offY) / scale;
+    let sw = (r.w * boxW) / scale;
+    let sh = (r.h * boxH) / scale;
+    // Clamp to the source frame.
+    sx = Math.max(0, Math.min(vw - 1, sx));
+    sy = Math.max(0, Math.min(vh - 1, sy));
+    sw = Math.max(1, Math.min(vw - sx, sw));
+    sh = Math.max(1, Math.min(vh - sy, sh));
+    return { sx, sy, sw, sh };
+  }
+
   function analyzeFrame() {
     const w = analysis.width, h = analysis.height;
     try {
-      actx.drawImage(video, 0, 0, w, h);
+      const r = roiSourceRect();
+      if (r) actx.drawImage(video, r.sx, r.sy, r.sw, r.sh, 0, 0, w, h);
+      else actx.drawImage(video, 0, 0, w, h);
     } catch (_) {
       return 0; // video not ready yet
     }
@@ -523,6 +574,11 @@
 
   // ---- Run sequence --------------------------------------------------------
   async function beginSequence() {
+    // Exit detection-zone editing if it was open.
+    roiEditing = false;
+    roiEl.classList.remove('editing');
+    regionBtn.classList.remove('running');
+
     // Reset run state
     clearTimers();
     gunFired = false;
@@ -766,6 +822,70 @@
     ensureGunAudio();
     playGunshot();
   });
+
+  // ---- Detection zone editing ----------------------------------------------
+  let roiEditing = false;
+  let roiDrag = null; // { mode:'move'|'resize', startX, startY, orig }
+
+  function setRoiEditing(on) {
+    roiEditing = on;
+    roiEl.classList.toggle('editing', on);
+    regionBtn.classList.toggle('running', on);
+    if (on && (state === State.IDLE || state === State.DONE)) {
+      statusEl.textContent = 'Drag the box over the athlete · drag the corner to resize · tap ▣ to finish';
+    } else if (!on && (state === State.IDLE || state === State.DONE)) {
+      resetToIdle();
+    }
+  }
+
+  regionBtn.addEventListener('click', () => setRoiEditing(!roiEditing));
+
+  function onRoiPointerDown(e, mode) {
+    if (!roiEditing) return;
+    e.preventDefault();
+    e.stopPropagation();
+    roiDrag = {
+      mode,
+      startX: e.clientX,
+      startY: e.clientY,
+      orig: Object.assign({}, settings.roi),
+    };
+    try { e.target.setPointerCapture(e.pointerId); } catch (_) {}
+  }
+
+  function onRoiPointerMove(e) {
+    if (!roiDrag) return;
+    const bw = window.innerWidth, bh = window.innerHeight;
+    const dx = (e.clientX - roiDrag.startX) / bw;
+    const dy = (e.clientY - roiDrag.startY) / bh;
+    const o = roiDrag.orig;
+    const MIN = 0.08;
+    if (roiDrag.mode === 'move') {
+      settings.roi.x = Math.max(0, Math.min(1 - o.w, o.x + dx));
+      settings.roi.y = Math.max(0, Math.min(1 - o.h, o.y + dy));
+    } else { // resize from bottom-right corner
+      settings.roi.w = Math.max(MIN, Math.min(1 - o.x, o.w + dx));
+      settings.roi.h = Math.max(MIN, Math.min(1 - o.y, o.h + dy));
+    }
+    applyRoiStyle();
+  }
+
+  function onRoiPointerUp() {
+    if (!roiDrag) return;
+    roiDrag = null;
+    saveSettings();
+    refGray = null; // the analysed region changed; recapture reference next run
+  }
+
+  roiEl.addEventListener('pointerdown', (e) => {
+    if (e.target === roiHandle) return; // handled below
+    onRoiPointerDown(e, 'move');
+  });
+  roiHandle.addEventListener('pointerdown', (e) => onRoiPointerDown(e, 'resize'));
+  window.addEventListener('pointermove', onRoiPointerMove);
+  window.addEventListener('pointerup', onRoiPointerUp);
+  window.addEventListener('pointercancel', onRoiPointerUp);
+  window.addEventListener('resize', applyRoiStyle);
 
   historyBtn.addEventListener('click', () => { renderHistory(); historyPanel.classList.remove('hidden'); });
   closeHistory.addEventListener('click', () => historyPanel.classList.add('hidden'));

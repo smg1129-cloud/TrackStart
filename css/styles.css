@@ -63,6 +63,49 @@ html, body {
   pointer-events: none;
 }
 
+/* ---------- Detection zone (ROI) ---------- */
+.roi {
+  position: absolute;
+  z-index: 2;
+  border: 2px dashed rgba(53, 196, 106, 0.9);
+  border-radius: 8px;
+  box-shadow: 0 0 0 9999px rgba(0, 0, 0, 0.18); /* dim everything outside the zone */
+  pointer-events: none;                          /* only interactive while editing */
+  touch-action: none;
+}
+.roi-label {
+  position: absolute;
+  top: -22px;
+  left: 0;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent);
+  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.9);
+  white-space: nowrap;
+}
+.roi-handle {
+  position: absolute;
+  right: -13px;
+  bottom: -13px;
+  width: 26px;
+  height: 26px;
+  border-radius: 50%;
+  background: var(--accent);
+  border: 2px solid #04140a;
+  display: none;
+}
+/* Editing mode: interactive, brighter, with a visible move affordance */
+.roi.editing {
+  pointer-events: auto;
+  border-color: var(--accent);
+  border-style: solid;
+  background: rgba(53, 196, 106, 0.10);
+  cursor: move;
+}
+.roi.editing .roi-handle { display: block; pointer-events: auto; }
+
 /* ---------- Top bar ---------- */
 #topbar {
   position: absolute;
@@ -114,6 +157,11 @@ html, body {
   cursor: pointer;
 }
 .icon-btn:active { transform: scale(0.96); }
+.icon-btn.running { /* active/toggled state (e.g. editing the detection zone) */
+  background: rgba(53, 196, 106, 0.28);
+  border-color: var(--accent);
+  color: var(--accent);
+}
 
 /* ---------- Center stage ---------- */
 #stage {

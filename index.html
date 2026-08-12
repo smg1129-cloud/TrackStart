@@ -20,13 +20,20 @@
     <!-- Hidden canvas used for motion analysis -->
     <canvas id="analysis" width="192" height="144"></canvas>
 
-    <!-- Top bar: fastest time + history/settings buttons -->
+    <!-- Detection zone: motion is only measured inside this box -->
+    <div id="roi" class="roi">
+      <span class="roi-label">Detection zone</span>
+      <div class="roi-handle" id="roiHandle" aria-label="Resize"></div>
+    </div>
+
+    <!-- Top bar: fastest time + region/history/settings buttons -->
     <header id="topbar">
       <div class="best">
         <span class="best-label">Fastest</span>
         <span id="bestTime" class="best-value">—</span>
       </div>
       <div class="top-actions">
+        <button id="regionBtn" class="icon-btn" aria-label="Adjust detection zone" title="Adjust detection zone">▣</button>
         <button id="testGunBtn" class="icon-btn" aria-label="Test gun sound" title="Test gun sound">🔊</button>
         <button id="historyBtn" class="icon-btn" aria-label="History" title="History">≡</button>
         <button id="settingsBtn" class="icon-btn" aria-label="Settings" title="Settings">⚙</button>

@@ -33,16 +33,25 @@ anticipated the gun). Toggle this in Settings.
 
 ### Motion detection
 
-Movement is detected by comparing successive camera frames pixel-by-pixel. Two
-thresholds keep stray motion from triggering:
+Movement is measured **only inside the on-screen detection zone** (the dashed
+green box), so people, coaches, or traffic moving elsewhere in the frame are
+ignored. Tap the **▣** button to edit the zone: drag the box over the athlete
+and drag its corner to resize. The zone is saved on the device.
 
-- a **per-pixel brightness threshold** (ignores tiny lighting/noise changes), and
-- a **minimum changed-area threshold** (a whole limb / the body must move, not a
-  few strands of hair or a small background flutter).
+Within that zone, the first still frame after the gun is frozen as a reference,
+and movement is detected as the frame deviates from it. Robustness measures keep
+stray motion from triggering:
 
-Use the **Motion sensitivity** slider in Settings to tune this for your lighting
-and framing. Lower it if hair or background movement triggers false starts; raise
-it if real movement isn't being caught.
+- **global-shift compensation** (subtracts the median frame-to-reference
+  difference, cancelling whole-frame exposure/lighting drift),
+- **speckle rejection** (a changed pixel must have a changed neighbour, so sensor
+  noise and sub-pixel shake don't count), and
+- a **2-frame debounce** (needs two consecutive frames of change, timestamped on
+  the first so reaction times stay accurate).
+
+Use the **Motion sensitivity** slider in Settings to tune for your lighting and
+framing. Lower it if background movement triggers false starts; raise it if real
+movement isn't being caught.
 
 ---
 
