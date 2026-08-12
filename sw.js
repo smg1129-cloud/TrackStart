@@ -1,6 +1,6 @@
 /* Minimal service worker: cache the app shell so TrackStart is installable
  * and works offline. Bump CACHE_VERSION whenever the shell files change. */
-const CACHE_VERSION = 'trackstart-v8';
+const CACHE_VERSION = 'trackstart-v9';
 const ASSETS = [
   './',
   './index.html',
