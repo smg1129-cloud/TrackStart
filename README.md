@@ -18,7 +18,7 @@ When you press **START**, the app:
 1. Speaks **"Runner, take your mark"** and shows a **10-second countdown**
    (adjustable in Settings).
 2. Speaks **"Set"**.
-3. **0.5 s after "Set"**, motion detection **arms**. Any body movement from here
+3. **1.0 s after "Set"**, motion detection **arms**. Any body movement from here
    until the gun is flagged as a **FALSE START**.
 4. Fires a **gunshot** at a **random time between 1.2 s and 2.6 s** after "Set"
    (so the athlete can't anticipate it).

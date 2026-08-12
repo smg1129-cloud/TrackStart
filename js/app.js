@@ -4,7 +4,7 @@
  * Sequence when START is pressed:
  *   1. "Runner, take your mark"   (spoken)      -> hold with on-screen countdown (default 10 s)
  *   2. "Set"                      (spoken)      -> record setTime
- *   3. Motion detection arms at setTime + 0.5 s (false-start window opens)
+ *   3. Motion detection arms at setTime + 1.0 s (false-start window opens)
  *   4. Gunshot at setTime + random(0.8 s .. 2.2 s)
  *        - motion between arm and gun  -> FALSE START
  *        - first motion at/after gun    -> reaction time = motionTime - gunTime
@@ -22,7 +22,8 @@
   'use strict';
 
   // ---- Constants -----------------------------------------------------------
-  const ARM_DELAY_MS = 500;        // motion detection arms 0.5 s after "Set"
+  const ARM_DELAY_MS = 1000;       // motion detection arms 1.0 s after "Set"
+                                   // (lets the runner settle into set position)
   const GUN_MIN_MS = 1200;         // earliest gunshot after "Set"
   const GUN_MAX_MS = 2600;         // latest gunshot after "Set"
   const QUICK_RT_MS = 100;         // World Athletics false-start threshold
@@ -589,7 +590,7 @@
     gunTime = setTime + gunDelay;
     armTime = setTime + ARM_DELAY_MS;
 
-    // Arm motion detection 0.5 s after "Set".
+    // Arm motion detection 1.0 s after "Set".
     later(() => {
       if (state !== State.SET) return;
       state = State.ARMED;
