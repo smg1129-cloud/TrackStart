@@ -29,12 +29,11 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Configure Pages
+        # Pages is already enabled for this repo (Settings -> Pages -> Source:
+        # GitHub Actions). We intentionally do NOT pass enablement:true — the
+        # Actions token can't create a Pages site, so on a transient API hiccup
+        # enablement:true turns a retryable blip into a hard "create failed".
         uses: actions/configure-pages@v5
-        with:
-          # Best-effort auto-enable. On many repos the Actions token cannot
-          # CREATE the Pages site, so if this fails, enable Pages once under
-          # repo Settings -> Pages -> Source: GitHub Actions, then re-run.
-          enablement: true
 
       - name: Upload site
         uses: actions/upload-pages-artifact@v3
