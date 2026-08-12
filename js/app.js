@@ -45,6 +45,7 @@
   const camMsg = el('camMsg');
   const enableCamBtn = el('enableCamBtn');
 
+  const testGunBtn = el('testGunBtn');
   const historyBtn = el('historyBtn');
   const historyPanel = el('historyPanel');
   const historyList = el('historyList');
@@ -71,7 +72,7 @@
   let state = State.IDLE;
 
   let settings = {
-    sensitivity: 8,     // 1..20
+    sensitivity: 11,    // 1..20
     markHold: 10,       // seconds
     flagQuick: true,
   };
@@ -81,7 +82,7 @@
 
   let stream = null;
   let motionRunning = false;
-  let prevGray = null;
+  let refGray = null;      // frozen reference frame (the still "set" pose)
 
   // Per-run scheduling / timing
   let timers = [];
@@ -91,6 +92,7 @@
   let gunFired = false;
   let reactionCaptured = false;
   let countdownRAF = null;
+  let reactionRAF = null;  // live reaction-clock animation frame
 
   // ---- Utilities -----------------------------------------------------------
   const now = () => performance.now();
@@ -99,6 +101,7 @@
     timers.forEach((t) => clearTimeout(t));
     timers = [];
     if (countdownRAF) { cancelAnimationFrame(countdownRAF); countdownRAF = null; }
+    if (reactionRAF) { cancelAnimationFrame(reactionRAF); reactionRAF = null; }
   }
   function later(fn, ms) { const t = setTimeout(fn, ms); timers.push(t); return t; }
 
@@ -169,7 +172,7 @@
   // iOS hardware mute switch, but media-element playback is not — so the
   // gunshot must go through <audio> to be heard on phones. We fire several
   // overlapping copies at once for extra loudness (SPL stacks).
-  const GUN_POOL_SIZE = 4;
+  const GUN_POOL_SIZE = 6;
   let gunPool = [];
   let gunURI = null;
 
@@ -411,8 +414,11 @@
   }
 
   // ---- Motion detection ----------------------------------------------------
-  // Returns the fraction (0..1) of sampled pixels that changed noticeably
-  // since the previous analysed frame.
+  // Reference-frame differencing: the first frame after arming/firing is frozen
+  // as the reference (the still "set" pose). Every later frame is compared to
+  // that fixed reference, so as soon as the athlete begins to leave the set
+  // position the changed area grows and stays large — a reliable "first motion"
+  // trigger, unlike frame-to-frame diffing which only sees motion mid-stride.
   function analyzeFrame() {
     const w = analysis.width, h = analysis.height;
     try {
@@ -427,38 +433,40 @@
       // luma
       gray[i] = (frame[p] * 0.299 + frame[p + 1] * 0.587 + frame[p + 2] * 0.114) | 0;
     }
-    if (!prevGray) { prevGray = gray; return 0; }
+    if (!refGray) { refGray = gray; return 0; }
 
     // Per-pixel brightness threshold derived from sensitivity (1..20).
     // Higher sensitivity -> lower pixel threshold (smaller changes count).
-    const pixelThresh = 42 - settings.sensitivity * 1.6; // ~40 (low) .. ~10 (high)
+    const pixelThresh = 38 - settings.sensitivity * 1.5; // ~36 (low) .. ~8 (high)
     let changed = 0;
     for (let i = 0; i < n; i++) {
-      const d = gray[i] - prevGray[i];
+      const d = gray[i] - refGray[i];   // vs the FROZEN reference, not prev frame
       if ((d < 0 ? -d : d) > pixelThresh) changed++;
     }
-    prevGray = gray;
     return changed / n;
   }
 
   function motionThreshold() {
-    // Minimum fraction of the frame that must change to count as "real" motion.
-    // Higher sensitivity -> smaller required area.
-    // sensitivity 1  -> ~3.5% of frame ; sensitivity 20 -> ~0.4% of frame
-    return Math.max(0.004, 0.037 - settings.sensitivity * 0.0017);
+    // Minimum fraction of the frame that must differ from the reference to
+    // count as real motion. Higher sensitivity -> smaller required area.
+    // sensitivity 1 -> ~4% of frame ; sensitivity 20 -> ~0.3% of frame
+    return Math.max(0.003, 0.042 - settings.sensitivity * 0.002);
   }
 
   function startMotionLoop() {
     if (motionRunning) return;
     motionRunning = true;
-    prevGray = null;
+    refGray = null;
 
     const hasRVFC = 'requestVideoFrameCallback' in HTMLVideoElement.prototype;
 
     const step = () => {
       if (!motionRunning) return;
-      const frac = analyzeFrame();
-      handleMotion(frac);
+      // Only run the pixel analysis during the windows that judge motion:
+      // ARMED (watching for a false start) and FIRED (timing the reaction).
+      if (state === State.ARMED || state === State.FIRED) {
+        handleMotion(analyzeFrame());
+      }
       if (hasRVFC) {
         video.requestVideoFrameCallback(step);
       } else {
@@ -493,7 +501,7 @@
     clearTimers();
     gunFired = false;
     reactionCaptured = false;
-    prevGray = null;
+    refGray = null;
 
     // Ensure camera + audio are live (user gesture unlocks them here)
     unlockAudio();
@@ -563,7 +571,7 @@
       setPhaseClass('armed');
       statusEl.textContent = 'Hold… watching for movement';
       bigEl.textContent = '';
-      prevGray = null; // fresh baseline the instant we start judging
+      refGray = null; // freeze the set pose as the reference on the next frame
     }, ARM_DELAY_MS);
 
     // Fire the gun.
@@ -576,23 +584,43 @@
     gunFired = true;
     gunTime = now();           // exact moment sound is triggered
     reactionCaptured = false;
-    prevGray = null;           // baseline at the gun so first post-gun move is caught
+    refGray = null;            // re-freeze the set pose at the gun as reference
     setPhaseClass('fired');
     playGunshot();
     flash('green');
     statusEl.textContent = 'GO!';
-    bigEl.className = 'big-display';
-    bigEl.textContent = '';
+    // Show a live timer counting up from the gun; it freezes on first motion.
+    bigEl.className = 'big-display result';
+    bigEl.textContent = '0.000s';
+    startReactionClock();
 
     // If no motion is detected within a generous window, still close out.
     later(() => {
       if (state === State.FIRED && !reactionCaptured) {
+        stopReactionClock();
         state = State.DONE;
         statusEl.textContent = 'No movement detected';
-        subEl.textContent = 'Try increasing sensitivity in Settings';
+        bigEl.className = 'big-display';
+        bigEl.textContent = '—';
+        subEl.textContent = 'Raise sensitivity in Settings, or reframe the athlete';
         finishRun();
       }
-    }, 4000);
+    }, 5000);
+  }
+
+  // Live reaction clock: updates the big display every frame from the gun until
+  // motion is captured, so "starts on the gun / stops on first motion" is visible.
+  function startReactionClock() {
+    stopReactionClock();
+    const tickClock = () => {
+      if (state !== State.FIRED || reactionCaptured) return;
+      bigEl.textContent = ((now() - gunTime) / 1000).toFixed(3) + 's';
+      reactionRAF = requestAnimationFrame(tickClock);
+    };
+    reactionRAF = requestAnimationFrame(tickClock);
+  }
+  function stopReactionClock() {
+    if (reactionRAF) { cancelAnimationFrame(reactionRAF); reactionRAF = null; }
   }
 
   function onFalseStart() {
@@ -702,6 +730,14 @@
   });
 
   enableCamBtn.addEventListener('click', () => { unlockAudio(); startCamera(); });
+
+  // Test-gun button: fire the shot immediately so volume can be tuned without
+  // running the whole cadence. This is a user gesture, so audio unlocks here.
+  testGunBtn.addEventListener('click', () => {
+    ensureAudio();
+    ensureGunAudio();
+    playGunshot();
+  });
 
   historyBtn.addEventListener('click', () => { renderHistory(); historyPanel.classList.remove('hidden'); });
   closeHistory.addEventListener('click', () => historyPanel.classList.add('hidden'));
