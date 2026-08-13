@@ -1,46 +1,47 @@
-name: Deploy RecordsGuard FL to GitHub Pages
+# Publishes the static site (repo root) to GitHub Pages.
+#
+# DEPLOYMENT MODEL
+#   • A push to `main` builds and deploys the site. That's the only automatic
+#     trigger — `main` is the single source of truth for what's published.
+#   • You can also deploy on demand from the Actions tab (workflow_dispatch).
+#
+# ONE-TIME SETUP (required, or the deploy is rejected before it runs)
+#   GitHub only lets the `github-pages` environment deploy from branches you
+#   approve. Make sure BOTH are set:
+#     1. Settings → Pages → Source = "GitHub Actions".
+#     2. Settings → Environments → github-pages → Deployment branches and tags
+#        → allow `main`.
+#   Symptom if this isn't done: the "deploy" job fails in ~2 seconds with no
+#   runner assigned (an environment-protection rejection, not a build error).
+
+name: Deploy to GitHub Pages
 
 on:
   push:
-    branches:
-      - main
-      - claude/track-athlete-start-timer-8nwqmh
+    branches: [main]
   workflow_dispatch:
 
-# Allow the workflow to publish to Pages.
 permissions:
-  contents: read
-  pages: write
-  id-token: write
+  contents: read   # read the repository
+  pages: write     # publish to Pages
+  id-token: write  # let deploy-pages authenticate
 
-# Only one deployment at a time; don't cancel an in-progress one.
+# One deploy at a time; let an in-progress deploy finish rather than cancelling.
 concurrency:
   group: pages
   cancel-in-progress: false
 
 jobs:
   deploy:
+    runs-on: ubuntu-latest
     environment:
       name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
-    runs-on: ubuntu-latest
+      url: ${{ steps.deploy.outputs.page_url }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Configure Pages
-        # Pages is already enabled for this repo (Settings -> Pages -> Source:
-        # GitHub Actions). We intentionally do NOT pass enablement:true — the
-        # Actions token can't create a Pages site, so on a transient API hiccup
-        # enablement:true turns a retryable blip into a hard "create failed".
-        uses: actions/configure-pages@v5
-
-      - name: Upload site
-        uses: actions/upload-pages-artifact@v3
+      - uses: actions/checkout@v4
+      - uses: actions/configure-pages@v5
+      - uses: actions/upload-pages-artifact@v3
         with:
-          # Static site served from the repo root.
-          path: .
-
-      - name: Deploy to GitHub Pages
-        id: deployment
+          path: .   # the site is the repo root — plain static files, no build step
+      - id: deploy
         uses: actions/deploy-pages@v4
