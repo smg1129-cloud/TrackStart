@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#0f2438" />
+  <title>Client Portal | RecordsGuard FL</title>
+  <link rel="icon" href="assets/favicon.svg" type="image/svg+xml" />
+  <link rel="stylesheet" href="assets/css/site.css" />
+</head>
+<body class="app-body">
+
+  <!-- LOGIN -->
+  <div id="login" class="login-screen">
+    <div class="login-card">
+      <a class="brand" href="index.html"><span class="mark">§</span><span>RecordsGuard&nbsp;FL<small>Client Portal</small></span></a>
+      <p class="center muted" style="margin-top:6px">Association records digitization &amp; compliance</p>
+      <form onsubmit="return RGPortal.login(event)" style="margin-top:22px">
+        <div class="field">
+          <label for="lg-email">Email</label>
+          <input id="lg-email" type="email" placeholder="manager@association.com" required />
+        </div>
+        <div class="field">
+          <label for="lg-pass">Password</label>
+          <input id="lg-pass" type="password" placeholder="••••••••" required />
+        </div>
+        <button class="btn btn-primary btn-block" type="submit">Sign in</button>
+      </form>
+      <div class="demo-hint">Demo — any email &amp; password works. <a href="#" onclick="return RGPortal.demoLogin()">Use demo account →</a></div>
+      <p class="center" style="margin-top:16px"><a class="muted" href="index.html">← Back to site</a></p>
+    </div>
+  </div>
+
+  <!-- APP -->
+  <div id="app" class="app-shell hidden">
+    <aside class="app-side">
+      <a class="brand" href="index.html"><span class="mark">§</span><span>RecordsGuard&nbsp;FL<small>Client Portal</small></span></a>
+      <button class="side-link active" data-view="dashboard" onclick="RGPortal.go('dashboard')"><span>▚</span> Dashboard</button>
+      <button class="side-link" data-view="upload" onclick="RGPortal.go('upload')"><span>⬆</span> Upload records</button>
+      <button class="side-link" data-view="records" onclick="RGPortal.go('records')"><span>🗂</span> Records &amp; folders</button>
+      <button class="side-link" data-view="review" onclick="RGPortal.go('review')"><span>🚩</span> Review queue <span id="review-badge" class="pill amber" style="margin-left:auto"></span></button>
+      <button class="side-link" data-view="requests" onclick="RGPortal.go('requests')"><span>📨</span> Owner requests <span id="req-badge" class="pill teal" style="margin-left:auto"></span></button>
+      <button class="side-link" data-view="settings" onclick="RGPortal.go('settings')"><span>⚙</span> Settings</button>
+      <div class="side-foot">
+        Signed in as<br /><strong id="who" style="color:#cddae6"></strong><br />
+        <a href="#" onclick="return RGPortal.logout()" style="color:#8ba3b8">Sign out</a>
+      </div>
+    </aside>
+
+    <main class="app-main">
+      <!-- DASHBOARD -->
+      <section class="view active" data-view="dashboard">
+        <div class="app-topbar">
+          <h1>Dashboard</h1><div class="spacer"></div>
+          <span class="pill" id="assoc-pill"></span>
+        </div>
+        <div class="stat-row">
+          <div class="stat"><div class="n" id="s-docs">0</div><div class="l">Documents digitized</div></div>
+          <div class="stat"><div class="n" id="s-folders">0</div><div class="l">Records categories used</div></div>
+          <div class="stat flag"><div class="n" id="s-flags">0</div><div class="l">Awaiting review</div></div>
+          <div class="stat"><div class="n" id="s-reqs">0</div><div class="l">Open owner requests</div></div>
+        </div>
+        <div class="grid grid-2">
+          <div class="card">
+            <h3 class="mt-0">Get started</h3>
+            <p class="muted">Upload your association's records and let the AI organize and screen them.</p>
+            <div class="hero-actions">
+              <button class="btn btn-primary btn-sm" onclick="RGPortal.go('upload')">Upload records</button>
+              <button class="btn btn-ghost btn-sm" onclick="RGPortal.loadSamples()">Load sample records</button>
+            </div>
+          </div>
+          <div class="card">
+            <h3 class="mt-0">Compliance snapshot</h3>
+            <div id="dash-compliance"></div>
+          </div>
+        </div>
+        <h3 style="margin-top:28px">Recent activity</h3>
+        <div class="card" id="activity"></div>
+      </section>
+
+      <!-- UPLOAD -->
+      <section class="view" data-view="upload">
+        <div class="app-topbar"><h1>Upload records</h1></div>
+        <div id="dropzone" class="dropzone">
+          <div class="big">⬆</div>
+          <h3 class="mb-0">Drag &amp; drop records here</h3>
+          <p class="muted">or click to browse — PDFs, scans, spreadsheets, text files</p>
+          <input id="file-input" type="file" multiple class="hidden" />
+        </div>
+        <div class="flex" style="margin-top:14px;justify-content:space-between;flex-wrap:wrap">
+          <p class="muted mb-0" style="max-width:60ch;font-size:.9rem">Text files are read and screened on-device; other file types are categorized by name. No file leaves your browser in this demo.</p>
+          <button class="btn btn-ghost btn-sm" onclick="RGPortal.loadSamples()">Load sample records instead</button>
+        </div>
+        <div id="processing" class="hidden" style="margin-top:22px">
+          <h3>AI processing…</h3>
+          <div class="bar"><span id="proc-bar" style="width:0%"></span></div>
+          <p class="muted" id="proc-label" style="margin-top:8px"></p>
+        </div>
+        <div id="upload-results" style="margin-top:22px"></div>
+      </section>
+
+      <!-- RECORDS -->
+      <section class="view" data-view="records">
+        <div class="app-topbar"><h1>Records &amp; folders</h1><div class="spacer"></div>
+          <span class="muted" style="font-size:.9rem">Organized per Fla. Stat. <span id="records-cite">718.111(12)</span></span>
+        </div>
+        <div id="folders" class="folder-list"></div>
+        <div id="records-empty" class="card center hidden"><p class="muted mb-0">No records yet. <a href="#" onclick="return RGPortal.go('upload')">Upload some</a> or <a href="#" onclick="return RGPortal.loadSamples()">load samples</a>.</p></div>
+      </section>
+
+      <!-- REVIEW -->
+      <section class="view" data-view="review">
+        <div class="app-topbar"><h1>Review queue</h1><div class="spacer"></div>
+          <span class="muted" style="font-size:.9rem">Documents held until a human redacts &amp; approves</span>
+        </div>
+        <div class="callout warn" style="margin-bottom:18px">These documents contain information that is protected from owner inspection. Nothing here can be released to an owner until it is redacted and approved.</div>
+        <div id="review-list"></div>
+      </section>
+
+      <!-- REQUESTS -->
+      <section class="view" data-view="requests">
+        <div class="app-topbar"><h1>Owner records requests</h1></div>
+        <div id="requests-list"></div>
+      </section>
+
+      <!-- SETTINGS -->
+      <section class="view" data-view="settings">
+        <div class="app-topbar"><h1>Settings</h1></div>
+        <div class="form-card">
+          <div class="field">
+            <label for="set-name">Association name</label>
+            <input id="set-name" />
+          </div>
+          <div class="field">
+            <label>Association type</label>
+            <div class="seg" id="type-seg">
+              <button data-type="condo" onclick="RGPortal.setType('condo')">Condominium (718)</button>
+              <button data-type="hoa" onclick="RGPortal.setType('hoa')">HOA (720)</button>
+            </div>
+            <small>Determines the records taxonomy and whether the statutory checklist is mandatory.</small>
+          </div>
+          <button class="btn btn-primary btn-sm" onclick="RGPortal.saveSettings()">Save</button>
+        </div>
+        <div class="card" style="margin-top:20px;max-width:560px">
+          <h3 class="mt-0">Demo data</h3>
+          <p class="muted">Reset clears all documents and requests stored in this browser.</p>
+          <button class="btn btn-ghost btn-sm" onclick="RGPortal.resetDemo()">Reset demo data</button>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <div id="toast" class="toast"></div>
+  <script src="assets/js/data.js"></script>
+  <script src="assets/js/store.js"></script>
+  <script src="assets/js/portal.js"></script>
+</body>
+</html>

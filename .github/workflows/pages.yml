@@ -1,10 +1,11 @@
-name: Deploy TrackStart to GitHub Pages
+name: Deploy RecordsGuard FL to GitHub Pages
 
 on:
   push:
     branches:
       - main
       - claude/track-athlete-start-timer-8nwqmh
+      - claude/florida-hoa-records-portal-gywq8p
   workflow_dispatch:
 
 # Allow the workflow to publish to Pages.
@@ -38,7 +39,7 @@ jobs:
       - name: Upload site
         uses: actions/upload-pages-artifact@v3
         with:
-          # The app is a static site served from the repo root.
+          # Static site served from the repo root.
           path: .
 
       - name: Deploy to GitHub Pages
