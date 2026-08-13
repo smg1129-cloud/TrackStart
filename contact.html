@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta name="theme-color" content="#0f2438" />
+  <title>Contact &amp; Demo | RecordsGuard FL</title>
+  <meta name="description" content="Request a demo of RecordsGuard FL for your Florida condominium or homeowners association." />
+  <link rel="stylesheet" href="assets/css/site.css" />
+</head>
+<body data-page="contact">
+  <div id="site-header"></div>
+
+  <section>
+    <div class="wrap grid grid-2" style="gap:48px;align-items:start">
+      <div>
+        <p class="eyebrow">Get started</p>
+        <h1>Request a demo</h1>
+        <p class="muted" style="font-size:1.1rem">Tell us a little about your association and we'll show you how RecordsGuard FL handles a records request end to end — from upload to owner checklist.</p>
+        <div class="card" style="margin-top:24px">
+          <h3 class="mt-0">Prefer to reach a person?</h3>
+          <p class="mb-0">Email <a href="mailto:scott@associationlawfl.com">scott@associationlawfl.com</a> and we'll respond within one business day.</p>
+        </div>
+        <div class="callout info" style="margin-top:18px">
+          Want to explore first? Jump straight into the <a href="portal.html">client portal</a> or the <a href="owners.html">owner request portal</a> — both are live demos.
+        </div>
+      </div>
+
+      <div class="form-card">
+        <form id="demo-form" onsubmit="return submitDemo(event)">
+          <div class="field">
+            <label for="name">Your name</label>
+            <input id="name" name="name" required autocomplete="name" />
+          </div>
+          <div class="field">
+            <label for="email">Email</label>
+            <input id="email" name="email" type="email" required autocomplete="email" />
+          </div>
+          <div class="field">
+            <label for="assoc">Association name</label>
+            <input id="assoc" name="assoc" />
+          </div>
+          <div class="field">
+            <label for="type">Association type</label>
+            <select id="type" name="type">
+              <option value="condo">Condominium (Ch. 718)</option>
+              <option value="hoa">Homeowners association (Ch. 720)</option>
+              <option value="mixed">Both / management company</option>
+              <option value="other">Other</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="role">I am a…</label>
+            <select id="role" name="role">
+              <option>Board member</option>
+              <option>Community association manager</option>
+              <option>Association counsel</option>
+              <option>Owner</option>
+              <option>Other</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="msg">What would you like to see? (optional)</label>
+            <textarea id="msg" name="msg" rows="3"></textarea>
+          </div>
+          <button class="btn btn-primary btn-block" type="submit">Request demo</button>
+          <p class="cite center" style="margin:14px 0 0">This prototype form does not transmit data — it demonstrates the flow only.</p>
+        </form>
+        <div id="demo-thanks" class="hidden center" style="padding:20px 0">
+          <div style="font-size:3rem">✓</div>
+          <h3>Thanks, <span id="thanks-name">there</span>!</h3>
+          <p class="muted">In a production deployment this would reach our team. For now, feel free to explore the live portals.</p>
+          <div class="hero-actions" style="justify-content:center">
+            <a class="btn btn-navy btn-sm" href="portal.html">Client portal</a>
+            <a class="btn btn-ghost btn-sm" href="owners.html">Owner portal</a>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <div id="site-footer"></div>
+  <script src="assets/js/site.js"></script>
+  <script>
+    function submitDemo(e) {
+      e.preventDefault();
+      var name = document.getElementById('name').value || 'there';
+      document.getElementById('thanks-name').textContent = name;
+      document.getElementById('demo-form').classList.add('hidden');
+      document.getElementById('demo-thanks').classList.remove('hidden');
+      return false;
+    }
+  </script>
+</body>
+</html>

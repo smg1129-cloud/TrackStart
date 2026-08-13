@@ -1,0 +1,47 @@
+name: Deploy RecordsGuard FL to GitHub Pages
+
+on:
+  push:
+    branches:
+      - main
+      - claude/track-athlete-start-timer-8nwqmh
+      - claude/florida-hoa-records-portal-gywq8p
+  workflow_dispatch:
+
+# Allow the workflow to publish to Pages.
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Only one deployment at a time; don't cancel an in-progress one.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure Pages
+        # Pages is already enabled for this repo (Settings -> Pages -> Source:
+        # GitHub Actions). We intentionally do NOT pass enablement:true — the
+        # Actions token can't create a Pages site, so on a transient API hiccup
+        # enablement:true turns a retryable blip into a hard "create failed".
+        uses: actions/configure-pages@v5
+
+      - name: Upload site
+        uses: actions/upload-pages-artifact@v3
+        with:
+          # Static site served from the repo root.
+          path: .
+
+      - name: Deploy to GitHub Pages
+        id: deployment
+        uses: actions/deploy-pages@v4
