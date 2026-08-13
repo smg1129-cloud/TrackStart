@@ -1,133 +1,130 @@
-# TrackStart — Block Start Reaction Timer
+# RecordsGuard FL
 
-A phone web app that measures a sprinter's reaction time out of the blocks using
-the phone's **camera**, **speaker**, and **motion detection**. It runs the full
-starter's cadence — *"Runner, take your mark" → "Set" → gun* — with a randomized
-gun delay, detects movement before the gun as a **false start**, and times the
-first movement after the gun.
+**Records-inspection compliance for Florida condominium (Ch. 718) and homeowners (Ch. 720) associations.**
 
-Because it's built as a Progressive Web App (PWA), it installs and runs on **both
-iPhone and Android** straight from the browser — no App Store, no build tools.
+RecordsGuard FL helps associations meet their statutory duty to respond to owner
+records-inspection requests: digitize official records once, let an AI component
+organize and screen them, and fulfill every owner request with a defensible,
+audit-ready trail — including the records checklist Chapter 718 now requires.
 
----
-
-## How it works
-
-When you press **START**, the app:
-
-1. Speaks **"Runner, take your mark"** and shows a **10-second countdown**
-   (adjustable in Settings).
-2. Speaks **"Set"**.
-3. **2.0 s after "Set"**, motion detection **arms**. Any body movement from here
-   until the gun is flagged as a **FALSE START**.
-4. Fires a **gunshot** at a **random time between 3.2 s and 4.2 s** after "Set"
-   (so the athlete can't anticipate it).
-5. After the gun, it watches the camera and records the **time between the gun
-   and the athlete's first movement** — shown in large print on screen.
-6. Stores every result, tracks the **fastest time** (shown top-left), and keeps a
-   session **history**. Pressing **START** again resets for the next start.
-
-Reaction times **under 0.100 s** are optionally flagged as false starts, matching
-World Athletics rules (a human can't react that fast — it means the athlete
-anticipated the gun). Toggle this in Settings.
-
-### Motion detection
-
-Movement is measured **only inside the on-screen detection zone** (the dashed
-green box), so people, coaches, or traffic moving elsewhere in the frame are
-ignored. Tap the **▣** button to edit the zone: drag the box over the athlete
-and drag its corner to resize. The zone is saved on the device.
-
-Within that zone, the first still frame after the gun is frozen as a reference,
-and movement is detected as the frame deviates from it. Robustness measures keep
-stray motion from triggering:
-
-- **global-shift compensation** (subtracts the median frame-to-reference
-  difference, cancelling whole-frame exposure/lighting drift),
-- **speckle rejection** (a changed pixel must have a changed neighbour, so sensor
-  noise and sub-pixel shake don't count), and
-- a **2-frame debounce** (needs two consecutive frames of change, timestamped on
-  the first so reaction times stay accurate).
-
-Use the **Motion sensitivity** slider in Settings to tune for your lighting and
-framing. Lower it if background movement triggers false starts; raise it if real
-movement isn't being caught.
+> This repository is a **deployable static prototype**. It demonstrates the full
+> user experience end-to-end with an on-device (in-browser) AI simulation. It is
+> **not** legal advice, and the AI/auth/storage layers are stubs intended to show
+> the workflow and product design, not a production system. See
+> [Production notes](#from-prototype-to-production).
 
 ---
 
-## Setup — hosting it so the camera works
+## The three areas
 
-Browsers only grant camera access over **HTTPS** (or `localhost`). The easiest way
-to get an HTTPS URL is **GitHub Pages**:
+The site is organized around how a records request actually flows.
 
-1. Push this repository to GitHub (this branch already contains the app).
-2. In the repo, go to **Settings → Pages**.
-3. Under **Build and deployment**, set **Source: Deploy from a branch**, pick this
-   branch and the `/ (root)` folder, and **Save**.
-4. After a minute, GitHub gives you a URL like
-   `https://<user>.github.io/TrackStart/`.
-5. Open that URL **on your phone** and allow camera + audio when prompted.
-6. Optionally **Add to Home Screen** (Share menu on iOS, browser menu on Android)
-   to run it fullscreen like a native app.
+1. **Public informational site** — plain-language explanations of the Ch. 718 and
+   Ch. 720 records-inspection requirements: what records must be maintained,
+   retention periods, response deadlines, protected records, and penalties.
+   - `index.html` · `how-it-works.html` · `law.html` · `faq.html` · `contact.html`
 
-### Run locally (for development)
+2. **Client digitization area** (password-protected) — associations upload their
+   records. The AI reads each document, files it into the correct statutory
+   category, and **flags anything with sensitive information** (SSNs, bank/account
+   numbers, protected health information, driver-license numbers, personal contact
+   info) into a human review queue before anything can be released.
+   - `portal.html` (demo login — any credentials, or the "Use demo account" link)
 
-Any static file server works — it just has to be `localhost`:
+3. **Owner request portal** — owners submit and track inspection requests against
+   the statutory clock. The association fulfills the request and the system
+   generates the **records checklist** (mandatory for condominiums since 2024;
+   produced for HOAs too as best practice), documenting what was provided,
+   redacted, or withheld — with the statutory basis for each.
+   - `owners.html`
+
+The client portal and owner portal share a browser-local data store, so a request
+submitted by an owner appears in the association's portal for fulfillment, and the
+resulting records + checklist appear back in the owner's tracker.
+
+---
+
+## Try it locally
+
+It's a static site — no build step.
 
 ```bash
-# from the project root
+# from the repo root
 python3 -m http.server 8000
-# then open http://localhost:8000 on the same machine
+# then open http://localhost:8000
 ```
 
-To test on a physical phone during development you'll need HTTPS (e.g. a tunneling
-service or GitHub Pages), since `localhost` won't be the phone.
+Suggested walkthrough:
+
+1. Open **Client Login** → *Use demo account* → **Load sample records**.
+2. Watch the AI categorize each file and flag three of them. Open **Review queue**
+   and redact/approve or withhold each flagged document.
+3. In a second tab, open **Owner Records Request**, submit a request for *All
+   official records*.
+4. Back in the client portal → **Owner requests** → *Fulfill & generate checklist*.
+5. In the owner tab → **Track my requests** → enter the same email to see the
+   released records and the checklist.
+
+Use **Settings** in the client portal to switch the association between
+Condominium (718) and HOA (720) and to reset the demo data.
 
 ---
 
-## Using it at the track
+## Project structure
 
-1. Mount or prop the phone so the **rear camera** frames the athlete in the blocks.
-   Keep the background as still as possible.
-2. Make sure the phone **volume is up** (the commands and gun come from the speaker).
-3. Tap **START** once the athlete is in position and settle time is fine.
-4. Read the reaction time off the screen; check **History** (≡) for the session and
-   **Fastest** at the top-left.
+```
+index.html            Home (public)
+how-it-works.html     The workflow / the three areas (public)
+law.html              Ch. 718 & 720 records reference (public)
+faq.html              FAQ (public)
+contact.html          Demo request form (public)
+portal.html           Client digitization portal (app)
+owners.html           Owner records request portal (app)
+assets/
+  css/site.css        Shared design system
+  js/data.js          Domain model: records taxonomy, protected lists,
+                      sensitive-info detectors, deadlines/penalties
+  js/store.js         Shared browser-local state (localStorage)
+  js/site.js          Shared header/footer for public pages
+  js/portal.js        Client portal logic + simulated AI pipeline
+  js/owners.js        Owner portal logic
+  favicon.svg
+```
 
-**Accuracy note:** timing resolution is limited by the camera frame rate
-(~16 ms at 60 fps, ~33 ms at 30 fps) and speaker/detection latency. This is an
-excellent **training tool** for comparing starts and drilling reaction, but it is
-not a certified/officiated timing system.
+`assets/js/data.js` is the single source of truth for the statutory taxonomy and
+is consumed by the public pages **and** both portals.
 
 ---
 
-## Tech
+## From prototype to production
 
-- **Camera:** `getUserMedia` (rear camera, up to 60 fps)
-- **Voice commands:** Web Speech API (`speechSynthesis`)
-- **Gunshot:** synthesized with the Web Audio API (no audio file needed)
-- **Motion:** canvas frame-differencing, sampled per video frame
-  (`requestVideoFrameCallback` where available)
-- **Storage:** `localStorage` (results + settings persist on the device)
-- **PWA:** installable, works offline after first load (service worker)
+The prototype deliberately runs client-side. A production build would add:
 
-No frameworks, no external dependencies, no network calls — everything runs on
-the phone.
+- **Real authentication & tenancy** — encrypted logins, per-association data
+  isolation, and roles for board members, managers, and counsel.
+- **Server-side storage** — encrypted document storage with immutable audit logs
+  of every access and disposition.
+- **A real document-AI pipeline** — OCR + a vision/LLM model to read scanned pages,
+  classify records, and detect sensitive data (replacing the regex/keyword
+  heuristics in `data.js`), always with human-in-the-loop confirmation before
+  release.
+- **Redaction tooling** — actual redaction of flagged content rather than a status
+  flag.
+- **Deadline automation** — reminders and escalation tied to the 10-day clock.
 
-## Project layout
+---
 
-```
-index.html              app markup + layout
-css/styles.css          styling / fullscreen camera UI
-js/app.js               camera, audio, motion detection, timing, storage
-manifest.webmanifest    PWA metadata
-sw.js                   service worker (offline / installable)
-icons/icon.svg          app icon
-```
+## Deployment
 
-## Browser support
+A GitHub Actions workflow (`.github/workflows/pages.yml`) publishes the site to
+GitHub Pages on pushes to this branch. Because it's a plain static site, it can be
+hosted anywhere.
 
-- **iOS:** Safari 16+ (Web Speech + `getUserMedia` supported; must be HTTPS).
-- **Android:** Chrome / Edge (full support, including 60 fps frame callbacks).
+---
 
-Audio and camera unlock on the first tap of **START**, per mobile autoplay rules.
+## Disclaimer
+
+Informational only and **not legal advice**. Use of this site does not create an
+attorney-client relationship. Statutory summaries are provided for product-design
+purposes; always confirm requirements against the current official text of
+Chapters 718 and 720, Florida Statutes.
